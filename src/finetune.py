@@ -5,8 +5,8 @@ Dataset: hasil pretokenize.py (parquet dgn kolom input_ids/labels),
 atau HF dataset (pretokenize on-the-fly).
 
 Usage:
-  python src/finetune.py --data-dir data_tok --model google/byt5-medium --out output/m1
-  python src/finetune.py --hf-dataset DranyX/corpus-cleaning-v1 --model google/byt5-small --out output/s1
+  python src/finetune.py --data-dir dataset/tok --model google/byt5-medium --out models/m1
+  python src/finetune.py --hf-dataset DranyX/corpus-cleaning-v1 --model google/byt5-small --out models/s1
 """
 import argparse
 import glob

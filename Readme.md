@@ -16,16 +16,29 @@ pip uninstall -y torchao   # Kaggle/older envs: PEFT 0.19 breaks on torchao < 0.
 
 ```bash
 # optional: pretokenize once (byte-level, fast)
-python src/pretokenize.py --data-dir <parquet-folder> --out data_tok
+python src/pretokenize.py --data-dir <parquet-folder> --out dataset/tok
 
 # fine-tune
-python src/finetune.py --data-dir data_tok --model google/byt5-medium --out output/m1
+python src/finetune.py --data-dir dataset/tok --model google/byt5-medium --out models/m1
 
 # RTX 3070 Ti (8GB): bf16 + smaller batch
-python src/finetune.py --data-dir data_tok --model google/byt5-medium --out output/m1 --bf16 --batch 4 --accum 4
+python src/finetune.py --data-dir dataset/tok --model google/byt5-medium --out models/m1 --bf16 --batch 4 --accum 4
 
 # inference
-python src/inference.py --adapter output/m1/final --text "dirty text here"
+python src/inference.py --adapter models/m1/final --text "dirty text here"
+```
+
+## Directory layout
+
+Scripts create these automatically:
+
+```
+dataset/
+└── tok/            ← pretokenized parquet (input_ids/labels)
+models/
+└── m1/
+    ├── checkpoint-*/  ← intermediate checkpoints
+    └── final/         ← best LoRA adapter + tokenizer files
 ```
 
 | Flag | Default | Notes |

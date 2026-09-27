@@ -3,13 +3,13 @@ __pycache__/
 *.py[cod]
 
 # Training outputs & model weights
-output/
+models/
 *.safetensors
 *.bin
 *.ckpt
 
 # Local data (download dari HF, jangan di-commit)
-data/
+dataset/
 data_tok/
 *.parquet
 *.jsonl

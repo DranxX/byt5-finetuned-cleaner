@@ -2,7 +2,7 @@
 Inference: load base ByT5 + adapter LoRA, clean dirty text.
 
 Usage:
-  python src/inference.py --adapter output/m1/final --text "dirty text here"
+  python src/inference.py --adapter models/m1/final --text "dirty text here"
   python src/inference.py --adapter user/repo-on-hf --text "..."
 """
 import argparse
