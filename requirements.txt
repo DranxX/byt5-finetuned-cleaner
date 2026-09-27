@@ -1,0 +1,16 @@
+# Kaggle-tested (2024-12, T4 x2)
+# transformers 5.x gak kompatibel dgn peft 0.19 di beberapa path — pin yang teruji
+transformers==4.46.3
+torch>=2.4.0,<3.0
+datasets==3.2.0
+accelerate==1.2.1
+peft==0.14.0
+bitsandbytes==0.45.0
+sentencepiece==0.2.0
+tokenizers>=0.21
+pyarrow>=18.0
+numpy>=1.26
+
+# CATATAN Kaggle: torchao pre-installed (0.10.0) bikin PEFT raise ImportError
+# saat inject LoRA. Uninstall:
+#   pip uninstall -y torchao

@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+
+# Training artifacts
+output/
+outputs/
+checkpoints/
+runs/
+wandb/
+data_tok/
+*.safetensors
+*.bin
+*.ckpt
+*.pt
+*.pth
+
+# Data lokal (parquet besar jangan di-commit)
+*.parquet
+*.jsonl
+data/
+datasets/
+
+# Rust build (kalau binary/tokenizer rust ikut di repo)
+target/
+
+# Editor & OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# HF cache
+.cache/
+hf_cache/
+
+# Notebook artifacts
+.ipynb_checkpoints/
