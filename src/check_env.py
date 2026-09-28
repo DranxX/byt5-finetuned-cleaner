@@ -376,6 +376,60 @@ def _check_one_dir(d, deep):
     ok(f"panjang input {stat['in_min']}..{stat['in_max']} byte | labels {stat['lab_min']}..{stat['lab_max']} byte")
 
 
+def check_lora_grad_checkpointing():
+    """Smoke test yang dulu bikin orang nambahin enable_input_require_grads().
+
+    Crash "element 0 of tensors does not require grad" hanya terjadi di stack
+    lama (torch < 2.1 / transformers < 4.35) yang default-nya
+    use_reentrant=True. Stack pin kita (default use_reentrant=False) gak
+    kena -- buktiin langsung pake mini-T5, bukan cuma teori.
+    """
+    global cuda_ok
+    if not cuda_ok:
+        return
+    head("LoRA + gradient checkpointing smoke test")
+    try:
+        import torch
+        from transformers import T5Config, T5ForConditionalGeneration
+        from peft import LoraConfig, TaskType, get_peft_model
+
+        cfg = T5Config(vocab_size=384, d_model=64, d_ff=128, num_layers=2,
+                       num_heads=4, d_kv=16, decoder_start_token_id=0)
+        model = T5ForConditionalGeneration(cfg)
+        model.config.use_cache = False
+        lora = LoraConfig(task_type=TaskType.SEQ_2_SEQ_LM, r=8, lora_alpha=16,
+                          target_modules=["q", "k", "v", "o", "wi_0", "wi_1", "wo"])
+        model = get_peft_model(model, lora)
+        model.train()
+        # persis jalur finetune.py: Trainer(gradient_checkpointing=True)
+        # -> gradient_checkpointing_enable() tanpa kwargs -> default stack
+        model.gradient_checkpointing_enable()
+        model.to("cuda")
+        out = model(input_ids=torch.randint(3, 250, (2, 16), device="cuda"),
+                    labels=torch.randint(3, 250, (2, 8), device="cuda"))
+        out.loss.backward()
+        n_grad = sum(p.grad is not None and p.grad.abs().sum() > 0
+                     for p in model.parameters() if p.requires_grad)
+        if n_grad == 0:
+            bad("forward-backward lalu tapi gak ada grad yang mengalir")
+            problems.append("LoRA+grad-checkpoint: grad kosong")
+            return
+        ok(f"forward-backward OK, {n_grad} trainable param dapat grad")
+        model.zero_grad(set_to_none=True)
+    except Exception as e:
+        bad(f"crash: {type(e).__name__}: {str(e).splitlines()[0][:80]}")
+        problems.append("LoRA+grad-checkpoint crash")
+        print("         kalau 'does not require grad': stack lama (use_reentrant=True) --")
+        print("         update transformers, atau panggil model.enable_input_require_grads().")
+    finally:
+        # buang model mini dari VRAM biar gak makan tempat buat training
+        try:
+            del model
+            torch.cuda.empty_cache()
+        except Exception:
+            pass
+
+
 def check_disk():
     head("Disk")
     try:
@@ -402,6 +456,7 @@ def main():
     check_torch_and_gpu()
     check_libs()
     check_flash_attn()
+    check_lora_grad_checkpointing()
     check_disk()
     check_dataset(args.data_dir, args.deep)
 
