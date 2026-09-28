@@ -21,27 +21,46 @@ from torch.utils.data import Dataset
 # Dataset
 # ---------------------------------------------------------------
 class TokenParquetDataset(Dataset):
-    """Parquet dgn kolom input_ids/labels."""
+    """Parquet dgn kolom input_ids/labels.
+
+    Flat int32 + offsets int64 (bukan to_pylist) — 1.43M rows cuma ~5 GB RAM,
+    vs puluhan GB kalau di-materialize jadi Python list-of-lists.
+    """
 
     def __init__(self, data_dir: str):
         import pyarrow.parquet as pq
         files = sorted(glob.glob(os.path.join(data_dir, "train-*.parquet")))
         if not files:
             raise SystemExit(f"tidak ada parquet train-* di {data_dir}")
-        self.input_ids, self.labels = [], []
+        in_flat, in_off = [], [0]
+        lab_flat, lab_off = [], [0]
         for fn in files:
-            t = pq.read_table(fn)
-            self.input_ids.extend(t.column("input_ids").to_pylist())
-            self.labels.extend(t.column("labels").to_pylist())
-        print(f"loaded {len(self.input_ids)} rows dari {len(files)} file")
+            t = pq.read_table(fn, columns=["input_ids", "labels"])
+            for col, flat, off in (("input_ids", in_flat, in_off),
+                                   ("labels", lab_flat, lab_off)):
+                for arr in t.column(col).chunks:  # ListArray per chunk
+                    vals = np.asarray(arr.values, dtype=np.int32)
+                    offs = np.asarray(arr.offsets, dtype=np.int64)
+                    start = int(offs[0])
+                    flat.append(vals[start:int(offs[-1])])
+                    off.extend((offs[1:] - start + off[-1]).tolist())
+        self.input_ids = np.concatenate(in_flat) if in_flat else np.empty(0, np.int32)
+        self.labels = np.concatenate(lab_flat) if lab_flat else np.empty(0, np.int32)
+        self.input_offsets = np.asarray(in_off, dtype=np.int64)
+        self.label_offsets = np.asarray(lab_off, dtype=np.int64)
+        print(
+            f"loaded {len(self.input_offsets) - 1} rows dari {len(files)} file "
+            f"(input {self.input_ids.nbytes / 2**30:.2f} GB, "
+            f"labels {self.labels.nbytes / 2**30:.2f} GB)"
+        )
 
     def __len__(self):
-        return len(self.input_ids)
+        return len(self.input_offsets) - 1
 
     def __getitem__(self, idx):
         return {
-            "input_ids": np.asarray(self.input_ids[idx], dtype=np.int64),
-            "labels": np.asarray(self.labels[idx], dtype=np.int64),
+            "input_ids": self.input_ids[self.input_offsets[idx]:self.input_offsets[idx + 1]].astype(np.int64),
+            "labels": self.labels[self.label_offsets[idx]:self.label_offsets[idx + 1]].astype(np.int64),
         }
 
 
@@ -131,7 +150,7 @@ def main():
     ap.add_argument("--val-frac", type=float, default=0.1)
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--bf16", action="store_true", help="GPU Ampere+ (30xx/A100)")
-    ap.add_argument("--attn", default="sdpa", choices=["sdpa", "eager"])
+    ap.add_argument("--attn", default="sdpa", choices=["sdpa", "eager", "flash_attention_2"])
     args = ap.parse_args()
 
     if not args.data_dir and not args.hf_dataset:
