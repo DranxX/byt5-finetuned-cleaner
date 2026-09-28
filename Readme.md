@@ -12,11 +12,37 @@ pip install -r requirements.txt
 pip uninstall -y torchao   # Kaggle/older envs: PEFT 0.19 breaks on torchao < 0.16
 ```
 
+> **Windows + GPU:** wheel `pip install torch` di Windows itu **CPU-only** —
+> `torch.cuda.is_available()` pasti `False` walau GPU ada. Install build CUDA:
+>
+> ```bash
+> pip uninstall -y torch torchvision torchaudio
+> pip install torch --index-url https://download.pytorch.org/whl/cu124
+> ```
+
+## 0. Cek environment dulu
+
+```bash
+python src/check_env.py
+```
+
+Ngecek: Python/OS, build torch (CPU vs CUDA — penyebab paling umum training
+nyasar ke CPU), GPU + VRAM + dukungan bf16, smoke test CUDA runtime, versi
+library vs pin di `requirements.txt`, dan sisa disk. Exit code `0` = siap,
+`1` = ada yang harus dibenerin dulu — bisa juga dipakai buat gate agent/CI.
+
+Output-nya sekalian ngasih rekomendasi flag (mis. `--batch 4 --accum 4 --bf16`
+buat 8GB). Kalau ternyata jalan di CPU: STOP, jangan lanjutin — 1.43M rows
+berhari-hari sampai berminggu-minggu. Perbaiki torch-nya, bukan script-nya.
+
 ## Usage
 
 ```bash
 # optional: pretokenize once (byte-level, fast)
 python src/pretokenize.py --data-dir <parquet-folder> --out dataset/tok
+
+# cek environment (GPU, torch build, libs) — wajib sebelum training
+python src/check_env.py
 
 # fine-tune
 python src/finetune.py --data-dir dataset/tok --model google/byt5-medium --out models/m1
