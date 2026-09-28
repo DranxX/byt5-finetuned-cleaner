@@ -184,13 +184,10 @@ def main():
     model.config.tie_word_embeddings = False
     model.config.use_cache = False
 
-    lora = LoraConfig(
-        task_type=TaskType.SEQ_2_SEQ_LM,
-        r=args.lora_r,
-        lora_alpha=args.lora_alpha,
-        lora_dropout=0.05,
-        target_modules=["q", "k", "v", "o", "wi_0", "wi_1", "wo"],
-    )
+    lora = LoraConfig(task_type=TaskType.SEQ_2_SEQ_LM, r=args.lora_r,
+                      lora_alpha=args.lora_alpha,
+                      lora_dropout=0.05,
+                      target_modules=["q", "k", "v", "o", "wi_0", "wi_1", "wo"])
     model = get_peft_model(model, lora)
     model.print_trainable_parameters()
 
@@ -201,6 +198,11 @@ def main():
         per_device_train_batch_size=args.batch,
         per_device_eval_batch_size=args.batch,
         gradient_accumulation_steps=args.accum,
+        # NOTE: kwargs ini WAJIB di transformers < 4.49 (incl. pin 4.46.3):
+        # default di sana = use_reentrant=True, yang + LoRA frozen embedding
+        # crash "element 0 of tensors does not require grad". transformers
+        # >= 4.49 udah default False, kwargs ini jadi no-op aman.
+        gradient_checkpointing_kwargs={"use_reentrant": False},
         gradient_checkpointing=True,
         fp16=not args.bf16,
         bf16=args.bf16,

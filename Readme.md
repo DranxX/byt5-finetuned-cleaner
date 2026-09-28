@@ -87,4 +87,5 @@ models/
 
 - Verified identical encoding with HF `ByT5Tokenizer` — see `src/check_tokenizer.py`.
 - **FlashAttention-2 gak berlaku buat model ini** — bukan soal GPU (T4 sm_75 memang gak support, tapi itu moot): arch T5/ByT5 di transformers gak punya integrasi FA2 → `ValueError: T5ForConditionalGeneration does not support Flash Attention 2 yet`. SDPA = implementasi tercepat yang tersedia, jadi default. `check_env.py` cek + catat ini.
+- **Gradient checkpointing + LoRA**: `finetune.py` eksplisit set `gradient_checkpointing_kwargs={"use_reentrant": False}` — WAJIB di transformers < 4.49 (termasuk pin 4.46.3) karena default di sana `use_reentrant=True` yang bikin crash `element 0 of tensors does not require grad` (embedding dibekukan LoRA, tidak ada grad yang mengalir). transformers ≥ 4.49 sudah default `False`, kwargs ini jadi no-op yang aman. `check_env.py` membuktikan grad mengalir lewat smoke test backward di GPU.
 - `TokenParquetDataset` nyimpen byte flat int32 + offsets — 1.43M rows ~5 GB RAM (bukan list-of-lists puluhan GB). Taruh dataset di disk internal (NVMe), jangan HDD/USB eksternal — loading dari USB bikin I/O jadi bottleneck.

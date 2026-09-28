@@ -368,13 +368,13 @@ def _check_one_dir(d, deep):
 
 
 def check_lora_grad_checkpointing():
-    """Smoke test yang dulu bikin orang nambahin enable_input_require_grads().
+    """Smoke test full backward dgn LoRA + gradient checkpointing.
 
-    Crash "element 0 of tensors does not require grad" hanya terjadi di stack
-    lama (torch < 2.1 / transformers < 4.35) yang default-nya
-    use_reentrant=True. Stack pin kita (default use_reentrant=False) gak
-    kena -- buktiin langsung pake mini-T5 (forward + backward + grad
-    mengalir), bukan cuma teori.
+    Crash "element 0 of tensors does not require grad" TERJADI di
+    transformers < 4.49 (incl. pin 4.46.3) kalau use_reentrant=True
+    (default di sana) -- finetune.py nanggulangi dgn explicit
+    gradient_checkpointing_kwargs={'use_reentrant': False}.
+    Smoke test ini mastiin grad benar-benar mengalir di stack yang jalan.
     """
     global cuda_ok
     if not cuda_ok:
@@ -397,9 +397,8 @@ def check_lora_grad_checkpointing():
         # -> gradient_checkpointing_enable() tanpa kwargs -> default stack
         model.gradient_checkpointing_enable()
         model.to("cuda")
-        # BACKWARD PASS beneran (bukan cuma forward): klaim "tanpa
-        # enable_input_require_grads -> RuntimeError element 0" kalau bener
-        # harus meledak persis di baris ini
+        # BACKWARD PASS beneran: klaim "tanpa hack -> RuntimeError element 0"
+        # harus meledak persis di sini kalau bener
         out = model(input_ids=torch.randint(3, 250, (2, 16), device="cuda"),
                     labels=torch.randint(3, 250, (2, 8), device="cuda"))
         out.loss.backward()
@@ -414,8 +413,9 @@ def check_lora_grad_checkpointing():
     except Exception as e:
         bad(f"crash: {type(e).__name__}: {str(e).splitlines()[0][:80]}")
         problems.append("LoRA+grad-checkpoint crash")
-        print("         kalau 'does not require grad': stack lama (use_reentrant=True) --")
-        print("         update transformers, atau panggil model.enable_input_require_grads().")
+        print("         kalau 'does not require grad': default use_reentrant=True kena --")
+        print("         solusi: gradient_checkpointing_kwargs={'use_reentrant': False}")
+        print("         (sudah dipasang di finetune.py -- versi transformers lu mungkin lama)")
     finally:
         # buang model mini dari VRAM biar gak makan tempat buat training
         try:
