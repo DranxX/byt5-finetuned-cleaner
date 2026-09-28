@@ -373,7 +373,8 @@ def check_lora_grad_checkpointing():
     Crash "element 0 of tensors does not require grad" hanya terjadi di stack
     lama (torch < 2.1 / transformers < 4.35) yang default-nya
     use_reentrant=True. Stack pin kita (default use_reentrant=False) gak
-    kena -- buktiin langsung pake mini-T5, bukan cuma teori.
+    kena -- buktiin langsung pake mini-T5 (forward + backward + grad
+    mengalir), bukan cuma teori.
     """
     global cuda_ok
     if not cuda_ok:
@@ -396,6 +397,9 @@ def check_lora_grad_checkpointing():
         # -> gradient_checkpointing_enable() tanpa kwargs -> default stack
         model.gradient_checkpointing_enable()
         model.to("cuda")
+        # BACKWARD PASS beneran (bukan cuma forward): klaim "tanpa
+        # enable_input_require_grads -> RuntimeError element 0" kalau bener
+        # harus meledak persis di baris ini
         out = model(input_ids=torch.randint(3, 250, (2, 16), device="cuda"),
                     labels=torch.randint(3, 250, (2, 8), device="cuda"))
         out.loss.backward()
