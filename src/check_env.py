@@ -217,34 +217,25 @@ def check_libs():
 
 
 def check_flash_attn():
-    global flash_ok, suggest
-    head("FlashAttention (opsional)")
+    """flash-attn itu gak relevan buat model ini: T5/ByT5 gak support FA2.
+
+    (transformers raise: 'T5ForConditionalGeneration does not support Flash
+    Attention 2 yet'). Yang tersedia: SDPA (default, tercepat) dan eager.
+    """
+    head("FlashAttention (gak berlaku utk T5/ByT5)")
     try:
-        import flash_attn  # noqa: F401
+        import flash_attn
 
         flash_ok = True
-        ok(f"flash-attn {getattr(flash_attn, '__version__', '?')} terinstall")
+        warn(f"flash-attn {getattr(flash_attn, '__version__', '?')} terinstall tapi GAK kepakai:")
+        print("         arch T5/ByT5 gak support FA2 di transformers (ValueError kalau dipaksa).")
     except Exception:
         if not cuda_ok:
-            print("  [INFO] flash-attn gak terinstall (wajar, GPU belum siap). Gak wajib — default SDPA.")
+            print("  [INFO] flash-attn gak terinstall. Gak masalah -- T5/ByT5 emang gak support FA2.")
             return
-        if platform.system() == "Windows":
-            warn("flash-attn gak terinstall — Windows gak punya wheel resmi, skip aja.")
-            print("         SDPA (default) udah pilihan tercepat di Windows.")
-            return
-        if gpu_caps and min(gpu_caps) >= (8, 0):
-            warn("flash-attn gak terinstall — opsional. SDPA udah cukup cepat.")
-            print("         Kalau mau ekstra (Linux + Ampere+): pip install flash-attn --no-build-isolation")
-            return
-        print("  [INFO] GPU < sm_80 — FA2 memang gak didukung di GPU ini. SDPA saja.")
-        return
-    # flash-attn terinstall:
-    if gpu_caps and min(gpu_caps) < (8, 0):
-        warn("flash-attn terinstall tapi GPU < sm_80 — gak kepakai, tetap SDPA.")
-    elif platform.system() == "Windows":
-        warn("flash-attn terinstall di Windows (wheel komunitas?) — kalau error pas training, pakai SDPA.")
-    else:
-        suggest += " --attn flash_attention_2"
+        print("  [INFO] flash-attn gak terinstall. Gak masalah -- T5/ByT5 emang gak support FA2.")
+    print("         Pilihan attention buat model ini: SDPA (default, tercepat) / eager.")
+    suggest = suggest  # gak ada rekomendasi FA2
 
 
 def check_dataset(data_dir=None, deep=False):
