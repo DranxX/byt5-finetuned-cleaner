@@ -267,7 +267,9 @@ def main():
         # yang crash "element 0 ... does not require grad" dgn LoRA frozen embed)
         gradient_checkpointing_kwargs={"use_reentrant": False},
         gradient_checkpointing=True,
-        fp16=not args.bf16,
+        # PENTING: fp16=False utk mT5 — fp16 bikin forward overflow (loss nan).
+        # Di GPU tanpa bf16 (T4): biarkan fp32 penuh (bf16 off => fp16 off dgn flag ini)
+        fp16=False,   # dilarang; mt5 + fp16 = NaN (verified). T5Gemma aman bf16 di Ampere
         bf16=args.bf16,
         optim=args.optim,
         learning_rate=args.lr,

@@ -120,6 +120,7 @@ Offline t5gemma: `--base temp/runtime` (snapshot lokal lengkap).
 | `torch.cuda.is_available() = False` | torch CPU build (Windows PyPI) | reinstall dari index cu124, lihat check_env output |
 | `bitsandbytes` gagal import | torch CPU / versi lama | fix torch dulu; darurat: `--optim adamw_torch` |
 | OOM pas training | batch kegedean / seq kepanjangan | `--batch 8 --accum 2` (mt5) atau 4/4 (t5gemma); checkpointing jangan dimatikan |
+| loss `0.0` / `nan` di mT5 | **mT5 + fp16 = overflow (known issue, verified)** | jangan pakai fp16 utk mt5; GPU tanpa bf16 (T4) → fp32 penuh; Ampere → `--bf16` |
 | `element 0 of tensors does not require grad` | transformers tua default `use_reentrant=True` | sudah di-fix di finetune.py; jangan hapus kwargs-nya |
 | t5gemma 401/gated | belum login / belum accept terms | `huggingface-cli login` + buka repo di browser, klik acknowledge |
 | shard bolong / tmp-*.parquet | download/pretokenize ke-interupted | hapus folder, download ulang |
