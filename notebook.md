@@ -91,24 +91,19 @@ assert total == 178_922, "shard gak utuh!"
 
 ```python
 # --- Cell 4: finetune mt5-small --------------------------------------------
-# DATASET_PATH di-set dari Cell 3 (path snapshot). Kalau jalankan cell ini
-# terpisah, set manual: DATASET_PATH = path dari Cell 3
-DATASET_PATH = path   # dari Cell 3; folder snapshot yang isinya data/train-00000-...
+# DATASET di-set dari Cell 3. NOTE: file di snapshot HF itu SYMLINK, dan
+# datasets 3.2.0 GAGAL baca symlink via wildcard -> wajib os.path.realpath.
+DATASET_PATH = path   # dari Cell 3
 
-import sys, os
-sys.path.insert(0, "/content/corpus-finetuned/src")  # kalau clone repo; ATAU inline di bawah
-
-# Opsi A (disarankan): clone repo biar pakai src/config.py dst.
-!git clone https://github.com/DranxX/byt5-finetuned-cleaner.git corpus-finetuned 2>/dev/null || true
-# NOTE: repo lama nama-nya byt5-finetuned-cleaner; kalau sudah di-rename di GitHub,
-# ganti ke DranxX/corpus-finetuned.
-
-# Opsi B (inline, tanpa repo): seluruh logic penting ada di cell ini.
-import torch
+import os, glob, torch
 from datasets import load_dataset
 from transformers import (AutoModelForSeq2SeqLM, AutoTokenizer, Trainer,
                           TrainingArguments)
 from peft import LoraConfig, TaskType, get_peft_model
+
+files = sorted(glob.glob(f"{DATASET_PATH}/data/train-*.parquet"))
+files = [os.path.realpath(f) for f in files]          # WAJIB: resolve symlink
+assert files, "parquet gak ketemu — jalankan Cell 3 dulu"
 
 MODEL = "google/mt5-small"
 MAX_IN, MAX_TGT = 512, 256          # token budget (id median 92 tok, p99 225)
@@ -127,8 +122,7 @@ lora = LoraConfig(task_type=TaskType.SEQ_2_SEQ_LM, r=32, lora_alpha=64,
 model = get_peft_model(model, lora)
 model.print_trainable_parameters()   # expect ~0.4% trainable
 
-ds = load_dataset("parquet", data_files={"train": f"{DATASET_PATH}/data/train-*.parquet"},
-                  split="train")
+ds = load_dataset("parquet", data_files={"train": files}, split="train")
 ds = ds.train_test_split(test_size=0.02, seed=42)   # pilot: val 2% aja
 print(ds)
 
@@ -249,6 +243,8 @@ Adapter mt5-small LoRA r=32 ≈ 5 MB — kecil, gak perlu upload ke HF dulu.
 | `torchao` ImportError saat inject LoRA | `!pip uninstall -y torchao` lalu restart session |
 | OOM di Cell 4 | `BATCH=8, ACCUM=4` |
 | Loss `nan` | turunkan LR ke 1e-4; T4 fp16 kadang sensitif |
+| `SchemaInferenceError: pass features or at least one example` | data_files nembak SYMLINK yang gak ke-resolve di datasets 3.2.0 — pakai `os.path.realpath()` (sudah di cell) & pastikan Cell 3 sukses |
+| `!git clone` macet/hang di notebook | pakai cell inline (git clone di notebook kadang nunggu password tanpa prompt) — sudah dihapus dari cell |
 | `element 0 ... does not require grad` | pastikan `gradient_checkpointing_kwargs={"use_reentrant": False}` ada (sudah di cell) |
 | Tokenizer error `<id>` prefix | pastikan pakai format `f"<{lang}> {raw}"` yang sama di training & inference |
 
