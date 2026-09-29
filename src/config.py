@@ -48,7 +48,11 @@ UMT5_BASE = ModelConfig(
     lora_targets=["q", "k", "v", "o", "wi_0", "wi_1", "wo"],
     max_input=4096,             # full-scan: input p99 id=185 tok, en median 1056 tok.
                                 # 4096 = 98.7% row utuh (512 cuma 82.6% — en kepotong!)
-    max_target=4096,            # p99.9 target id=174 tok, en p95 3.4K tok -> ~99% utuh
+    max_target=512,             # p99 target id ~130 tok, zh ~640 -> 512 nutup ~99.5% id/zh.
+                                # KENAPA BUKAN 4096: LM head vocab 256K bikin logits
+                                # [batch, target, 256384] fp32 = 7.8GB/target-4096/batch-2
+                                # (OOM ke-2 di cross_entropy, terbukti T4). 512 = 1.7GB peak.
+                                # en long-tail target kepotong — chunking utk kasus itu.
     attn="sdpa",                # FA2 gak didukung T5-family (verified)
     model_cls="UMT5ForConditionalGeneration",   # WAJIB: config.json google gak punya model_type
     notes="580M params | vocab 256K (+300 sentinel) | EMA-pretrained (lebih stabil) | "
