@@ -83,6 +83,32 @@ models/
 | `--bf16` | off | enable on Ampere+ (30xx/A100) |
 | `--attn` | `sdpa` | `sdpa` (default, tercepat) / `eager` — FA2 **gak berlaku** |
 
+## Model & sequence length
+
+ByT5 gak punya tokenizer — setiap byte = 1 token. Teks 500 karakter = **500 token**,
+vs ~125 token di SentencePiece. Makanya ByT5 berat soal sekuens:
+
+| | byt5-small (300M) | byt5-medium (582M) |
+|---|---|---|
+| Weights fp16 | ~0.6 GB | ~1.2 GB |
+| Attention di seq 1024 | ±3x biaya seq 512 | ±3x biaya seq 512 |
+
+Default `--max-input/--max-target` di **512/256 byte**: dari sampling 537K baris
+corpus, 99.1% input < 512 char dan 99.9% < 1024 — jadi budget 512/256 kehilangan
+<1% data sambil memangkas biaya attention ±4x dan aktivasi ±2x vs 1024/512.
+
+## VRAM (RTX 3070 Ti 8GB, byt5-medium, bf16 + LoRA + grad checkpointing)
+
+weights ~1.2 GB + LoRA/grads/optimizer ~0.4 GB + CUDA ctx ~0.5 GB → sisa ~5.9 GB
+untuk aktivasi. Dengan checkpointing, batch 8 @ 512/256 ≈ 1.6 GB — aman. Tanpa
+checkpointing, batch 4 @ 1024/512 butuh ~10 GB → OOM. Kombinasi gak masuk akal
+yang bikin OOM: `--max-input 1024` + lupa gradient checkpointing (default kita
+selalu on).
+
+Saran: mulai `--model google/byt5-small --batch 8` buat memvalidasi pipeline,
+baru medium `--batch 4 --accum 4` (aktif ~1.3 GB, aman). Kalau mau maksain
+1024/512 di 8 GB: batch 1–2 + checkpointing, tapi lemot — lebih baik jangan.
+
 ## Notes
 
 - Verified identical encoding with HF `ByT5Tokenizer` — see `src/check_tokenizer.py`.

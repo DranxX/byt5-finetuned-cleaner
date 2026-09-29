@@ -136,8 +136,10 @@ def main():
     ap.add_argument("--hf-dataset", default=None)
     ap.add_argument("--model", default="google/byt5-medium")
     ap.add_argument("--out", required=True)
-    ap.add_argument("--max-input", type=int, default=1024)
-    ap.add_argument("--max-target", type=int, default=512)
+    ap.add_argument("--max-input", type=int, default=512,
+                    help="byte budget input; 512 = cukup utk 99%% baris dataset (liat check_env)")
+    ap.add_argument("--max-target", type=int, default=256,
+                    help="byte budget target; 256 = cukup utk ~99%% baris")
     ap.add_argument("--lora-r", type=int, default=32)
     ap.add_argument("--lora-alpha", type=int, default=64)
     ap.add_argument("--epochs", type=float, default=1.0)

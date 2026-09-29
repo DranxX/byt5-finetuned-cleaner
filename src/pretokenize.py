@@ -36,8 +36,10 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data-dir", required=True)
     ap.add_argument("--out", required=True)
-    ap.add_argument("--max-input", type=int, default=1024)
-    ap.add_argument("--max-target", type=int, default=512)
+    ap.add_argument("--max-input", type=int, default=512,
+                    help="byte budget input; 512 nyangkut ~99%% baris corpus")
+    ap.add_argument("--max-target", type=int, default=256,
+                    help="byte budget target; 256 nyangkut ~99%% baris")
     ap.add_argument("--rows-per-shard", type=int, default=100_000)
     args = ap.parse_args()
 
