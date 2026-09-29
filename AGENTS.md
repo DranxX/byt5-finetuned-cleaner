@@ -1,6 +1,6 @@
 # AGENTS.md — panduan untuk AI agent
 
-Halo agent. Ini project **corpus-finetuned**: LoRA fine-tune toolkit untuk
+Ini project **corpus-finetuned**: LoRA fine-tune toolkit untuk
 text cleaning (raw → clean) di dataset `DranxX/corpus-cleaning-v1` (1.43M rows,
 id/en/zh). Hardware target: **RTX 3070 Ti 8 GB** milik pemilik akun, OS Windows
 (bisa juga WSL2/Kaggle T4).
@@ -84,7 +84,10 @@ corpus-finetuned/
 │   └── inference.py     ← load base+adapter, generate (prefix <lang> wajib)
 ├── dataset/             ← parquet dataset (download dari HF) [gitignored]
 ├── models/              ← checkpoint + adapter final [gitignored]
-└── temp/runtime/        ← snapshot lokal t5gemma-270m (sudah didownload) [gitignored]
+└── (temp/ optional)      ← snapshot model gated kalau mau offline [gitignored]
+
+File YANG TIDAK ADA di repo dan gak perlu dibuat ulang: notebook pilot,
+ipynb, screenshot — semuanya lokal-only, di-gitignore. Jangan commit.
 ```
 
 ## Cara menjalankan (urutan)
@@ -100,16 +103,31 @@ python src/check_env.py
 
 # 2. dataset (kalau belum ada): snapshot_download ke dataset/ (lihat Readme)
 
-# 3. training
-python src/finetune.py --model-family mt5-small --data-dir dataset \
-  --out models/mt5s1 --bf16 --batch 16 --accum 1
-python src/finetune.py --model-family t5gemma-270m --data-dir dataset \
-  --out models/t5g1 --bf16 --batch 8 --accum 2
+# 3. dataset utuh (8 shard, 1.43M rows) — taruh di dataset/ dalam repo (drive D)
+python - <<'PY'
+from huggingface_hub import snapshot_download
+snapshot_download("DranxX/corpus-cleaning-v1", repo_type="dataset",
+                  local_dir="dataset", allow_patterns=["data/*.parquet"])
+PY
 
-# 4. inference
-python src/inference.py --model-family mt5-small --adapter models/mt5s1/final \
+# 4. FULL TRAINING di 3070 Ti (semua default udah hasil pilot — jangan diubah):
+python src/finetune.py --model-family mt5-small --data-dir dataset \
+  --out models/mt5s-full --bf16 --batch 16 --accum 1
+#   (lr 3e-5, r16/a32... tunggu: default r=32/alpha=64 — utk full training di
+#    3070 Ti, r=32 OK karena bf16 + data 8x lebih beragam. Kalau loss nan
+#    di 1000 step pertama, turunin: --lora-r 16 --lora-alpha 32)
+# kalau bitsandbytes aman & VRAM sempit, boleh --optim paged_adamw_8bit
+
+python src/finetune.py --model-family t5gemma-270m --data-dir dataset \
+  --out models/t5g-full --bf16 --batch 8 --accum 2
+
+# 5. inference (default udah bawa mitigation pilot: rep-penalty, no-repeat, sentinel-strip)
+python src/inference.py --model-family mt5-small --adapter models/mt5s-full/final \
   --lang id --text "teks kotor di sini"
 ```
+
+Urutan kerja agent: **check_env exit 0 -> dataset -> mt5-small full -> evaluasi
+(ekspektasi val loss < 1.0 di id) -> baru t5gemma-270m -> bandingkan**.
 
 Offline t5gemma: `--base temp/runtime` (snapshot lokal lengkap).
 

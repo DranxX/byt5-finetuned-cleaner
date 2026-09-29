@@ -33,14 +33,27 @@ def load_model(adapter_path, family_cfg, base_override=None, device=None):
 
 
 @torch.no_grad()
-def clean(model, tok, text, lang, device, max_new_tokens=512, num_beams=1):
-    """Prefix <lang> wajib sama dgn format training."""
+def clean(model, tok, text, lang, device, max_new_tokens=512, num_beams=1,
+          min_new_tokens=0, repetition_penalty=1.2, no_repeat_ngram=4):
+    """Prefix <lang> wajib sama dgn format training.
+
+    Default mitigation (hasil pilot T4):
+    - repetition_penalty + no_repeat_ngram: cegah repetition loop di teks susah
+    - num_beams>1 + min_new_tokens: cegah EOS premature (length prior data synthetic)
+    - sentinel <extra_id_N> (prior span-corruption mT5) di-strip otomatis
+    """
     src = f"<{lang}> {text}"
+    max_len = getattr(model.config, "encoder_max_length", None) or 512
     ids = tok(src, return_tensors="pt", truncation=True,
-              max_length=model.config.encoder_max_length or 512).to(device)
+              max_length=max_len).to(device)
     out = model.generate(**ids, max_new_tokens=max_new_tokens,
-                         num_beams=num_beams, do_sample=False)
-    return tok.decode(out[0], skip_special_tokens=True)
+                         num_beams=num_beams, do_sample=False,
+                         min_new_tokens=min_new_tokens,
+                         repetition_penalty=repetition_penalty,
+                         no_repeat_ngram_size=no_repeat_ngram)
+    import re
+    txt = tok.decode(out[0], skip_special_tokens=True)
+    return re.sub(r"\s*<extra_id_\d+>\s*", " ", txt).strip()
 
 
 def main():

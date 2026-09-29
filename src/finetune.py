@@ -187,20 +187,31 @@ def main():
     ap.add_argument("--max-target", type=int, default=None)
     ap.add_argument("--lora-r", type=int, default=32)
     ap.add_argument("--lora-alpha", type=int, default=64)
-    ap.add_argument("--epochs", type=float, default=1.0)
+    ap.add_argument("--epochs", type=float, default=2.0)   # pilot terbukti: 1 epoch blm konvergen
     ap.add_argument("--batch", type=int, default=16)
     ap.add_argument("--accum", type=int, default=1)
-    ap.add_argument("--lr", type=float, default=2e-4)
-    ap.add_argument("--warmup", type=int, default=200)
-    ap.add_argument("--eval-steps", type=int, default=1000)
-    ap.add_argument("--save-steps", type=int, default=1000)
+    ap.add_argument("--lr", type=float, default=3e-5,
+                    help="WAJIB KECIL utk mT5+LoRA: 2e-4 bikin loss diverge "
+                         "(terbukti di T4: grad_norm ribuan -> nan). 1e-4 kalau udah stabil.")
+    ap.add_argument("--warmup", type=int, default=500)
+    ap.add_argument("--eval-steps", type=int, default=200)
+    ap.add_argument("--save-steps", type=int, default=400,
+                    help="WAJIB kelipatan bulat dari --eval-steps (load_best_model_at_end)")
+    ap.add_argument("--max-grad-norm", type=float, default=1.0)
     ap.add_argument("--val-frac", type=float, default=0.05)
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--bf16", action="store_true", help="GPU Ampere+ (30xx/A100) — WAJIB di 3070 Ti")
     ap.add_argument("--attn", default=None, choices=[None, "sdpa", "eager"])
-    ap.add_argument("--optim", default="paged_adamw_8bit",
-                    help="fallback aman: adamw_torch (kalau bitsandbytes bermasalah)")
+    ap.add_argument("--optim", default="adamw_torch",
+                    help="adamw_torch (default, stabil — hasil pilot T4). "
+                         "paged_adamw_8bit cuma kalau VRAM bener-bener sempit")
     args = ap.parse_args()
+
+    # guard: load_best_model_at_end mensyaratkan save_steps kelipatan eval_steps
+    if args.save_steps % args.eval_steps != 0:
+        raise SystemExit(
+            f"--save-steps ({args.save_steps}) harus kelipatan bulat dari "
+            f"--eval-steps ({args.eval_steps}) — load_best_model_at_end nolak kombinasi ini")
 
     if not args.data_dir and not args.hf_dataset:
         raise SystemExit("isi --data-dir ATAU --hf-dataset")
@@ -273,9 +284,12 @@ def main():
         bf16=args.bf16,
         optim=args.optim,
         learning_rate=args.lr,
+        max_grad_norm=args.max_grad_norm,   # clip — mT5 grad norm gede
         warmup_steps=args.warmup,
         lr_scheduler_type="cosine",
         logging_steps=50,
+        logging_nan_inf_filter=False,   # jujur: nan tampil sbg nan (pilot T4:
+                                        # filter ini nyamarin divergence jadi 0.000000)
         eval_strategy="steps",
         eval_steps=args.eval_steps,
         save_strategy="steps",

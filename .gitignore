@@ -8,10 +8,13 @@ models/
 *.bin
 *.ckpt
 
-# Local data (download dari HF, jangan di-commit)
+# Local data & notes (download dari HF / hasil eksperimen lokal — jangan di-commit)
 dataset/
 data_tok/
 *.parquet
 *.jsonl
 temp/
 notebook.md
+*.ipynb
+screenshots/
+*.png

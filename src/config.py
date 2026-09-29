@@ -42,10 +42,12 @@ MT5_SMALL = ModelConfig(
     # mT5 = T5 arch: attention q,k,v,o + FFN wi_0/wi_1/wo (Gated GELU)
     lora_targets=["q", "k", "v", "o", "wi_0", "wi_1", "wo"],
     max_input=512,
-    max_target=256,
+    max_target=512,             # p99 target = ~106 tok, tapi 512 utk long-tail en/zh
     attn="sdpa",                # T5-family GAK support FA2 — SDPA = tercepat tersedia
     notes="300M params | 250K vocab | median 92 tok utk rows id (73.6% korpus) | "
-          "tanpa dependency kernel eksternal",
+          "tanpa dependency kernel eksternal | "
+          "PILOT T4 SUKSES (val loss 25.5->2.25, lr 3e-5 r16, fp32); "
+          "fp16 DILARANG (overflow); lr 2e-4 DILARANG (diverge)",
 )
 
 # ---------------------------------------------------------------
@@ -61,10 +63,11 @@ T5GEMMA_270M = ModelConfig(
     lora_targets=["q_proj", "k_proj", "v_proj", "o_proj",
                    "gate_proj", "up_proj", "down_proj"],
     max_input=512,
-    max_target=256,
+    max_target=512,
     attn="sdpa",                # FA2 gak didukung arch ini (verified _supports_flash_attn=False)
     notes="~370M params | vocab 262K | sliding_window 4096 + full-attn layers | "
-          "GATED repo: wajib `huggingface-cli login` + accept Gemma terms dulu",
+          "GATED repo: wajib `huggingface-cli login` + accept Gemma terms dulu | "
+          "verified load+LoRA fwd/bwd+generate OK (transformers 4.55.x)",
 )
 
 # legacy: ByT5 (byte-level) — dipertahankan sebagai baseline/kontrol, BUKAN target
