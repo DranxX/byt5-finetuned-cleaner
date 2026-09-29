@@ -68,12 +68,13 @@ Dua config resmi (`src/config.py`):
 
 | key | repo | note |
 |---|---|---|
-| `mt5-small` | `google/mt5-small` | 300M. Tercepat di 8 GB; pilot T4 + validasi WSL2 (owner, 100K rows: loss 2.9/val 2.8) pakai ini |
-| `umt5-base` | `google/umt5-base` | **UPGRADE mt5**: params sama dgn mt5-base (580M) tapi pretrained lebih baik (EMA/scalable attention, max_distance 128, vocab 256K +300 sentinel). Tokenizer lebih padat utk id (5.37 vs 4.43 B/tok terukur). Weights bf16 1.2 GB — batch 8 aman di 8 GB |
-| `t5gemma-270m` | `google/t5gemma-2-270m-270m` | ~370M aktif, Gemma3-based enc-dec. **GATED** — wajib `huggingface-cli login` (akun DranxX sudah granted) |
+| `umt5-base` | `google/umt5-base` | **DEFAULT & PIPELINE UTAMA**. 580M, pretraining lebih baik (EMA/scalable attention, max_distance 128), vocab 256K +300 sentinel, tokenizer paling padat utk id (5.37 B/tok terukur). Weights bf16 1.2 GB — batch 8 aman di 8 GB. fp16 DILARANG (T5-family overflow) |
+| `t5gemma-270m` | `google/t5gemma-2-270m-270m` | ~370M aktif, Gemma3-based enc-dec — **DIPAKAI LAIN WAKTU** (setelah umt5 selesai). **GATED** — wajib `huggingface-cli login` (akun DranxX sudah granted) |
 | `byt5-medium` | `google/byt5-medium` | **LEGACY** — byte-level, selalu OOM di 8 GB utk korpus ini. Hanya buat pembanding. JANGAN sarankan utk training baru |
 
-**Rekomendasi urutan full training: mt5-small (validasi pipeline) -> umt5-base (kualitas utama) -> t5gemma-270m (pembanding).**
+mt5-small SUDAH DIHAPUS dari config (get_config nolak dgn pesan arahin ke umt5-base).
+Pilot sebelumnya (T4 + WSL2 validasi owner 100K rows: loss 2.9/val 2.8) jalan di mt5-small —
+semua hasilnya valid utk umt5-base karena arch & hyperparam identik (T5-family, LoRA targets sama).
 
 LoraConfig target modules beda per arch — diambil otomatis dari config.py.
 
@@ -87,7 +88,7 @@ corpus-cleaner/
 ├── src/
 │   ├── config.py        ← 2 config arsitektur (repo, LoRA targets, seq budget)
 │   ├── check_env.py     ← GATE: env/GPU/library/dataset/model-access (exit 0/1)
-│   ├── finetune.py      ← LoRA training (--model-family mt5-small | t5gemma-270m)
+│   ├── finetune.py      ← LoRA training (default umt5-base; t5gemma-270m opsional)
 │   └── inference.py     ← load base+adapter, generate (prefix <lang> wajib)
 ├── dataset/             ← parquet dataset (download dari HF) [gitignored]
 ├── models/              ← checkpoint + adapter final [gitignored]
@@ -144,9 +145,10 @@ python src/inference.py --model-family mt5-small --adapter models/mt5s-full/fina
 python src/eval_cases.py --adapter models/mt5s-full/final
 ```
 
-Urutan kerja agent: **check_env exit 0 -> dataset -> mt5-small full ->
+Urutan kerja agent: **check_env exit 0 -> dataset -> umt5-base full ->
 `eval_cases.py` (5 ood + 2 in-domain; target: konten utuh, tanpa repetition,
-boilerplate terbuang) -> t5gemma-270m full -> bandingkan keduanya**.
+boilerplate terbuang)**. t5gemma-270m = eksperimen LAIN WAKTU, bukan bagian
+run ini.
 Ekspektasi val loss: < 1.0 itu bagus; 2.25 = hasil pilot 1-shard (baseline).
 
 Offline t5gemma: `--base temp/runtime` (snapshot lokal lengkap).

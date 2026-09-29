@@ -11,10 +11,9 @@ val 2.8). Full training 1.43M rows belum dijalankan — jadwal & hasil menyusul.
 
 - **Dataset:** [DranxX/corpus-cleaning-v1](https://huggingface.co/datasets/DranxX/corpus-cleaning-v1) — 1,431,369 pair raw→clean (id 73.6% / en 20.5% / zh 5.8%)
 - **Config arsitektur (lihat `src/config.py`):**
-  1. `mt5-small` → `google/mt5-small` — 300M, SDPA, zero-dependency, **default (pilot-teruji)**
-  2. `umt5-base` → `google/umt5-base` — 580M, upgrade mT5 (pretraining lebih baik + tokenizer lebih padat utk id)
-  3. `t5gemma-270m` → `google/t5gemma-2-270m-270m` — ~370M aktif, sliding window 4096, **gated repo**
-  4. `byt5-medium` → legacy baseline (byte-level, OOM-prone — jangan dipakai training serius)
+  1. `umt5-base` → `google/umt5-base` — **580M, pipeline utama**. Pretraining lebih baik dari mT5 (EMA/scalable attention), vocab 256K, tokenizer paling padat utk id
+  2. `t5gemma-270m` → `google/t5gemma-2-270m-270m` — ~370M aktif, sliding window 4096, **gated repo** (dipakai lain waktu)
+  3. `byt5-medium` → legacy baseline (byte-level, OOM-prone — jangan dipakai training serius)
 
 ## ATURAN #1: checkup dulu, no exceptions
 
@@ -75,13 +74,13 @@ python src/check_env.py
 ## Fine-tune
 
 ```bash
-# CONFIG 1 — mt5-small (default, tercepat di 8 GB)
-python src/finetune.py --model-family mt5-small --data-dir dataset \
-  --out models/mt5s1 --bf16 --batch 8 --accum 2
+# CONFIG utama — umt5-base (580M)
+python src/finetune.py --data-dir dataset \
+  --out models/umt5-full --bf16
 
-# CONFIG 2 — t5gemma-270m (butuh login HF)
+# opsional — t5gemma-270m (butuh login HF, lain waktu)
 python src/finetune.py --model-family t5gemma-270m --data-dir dataset \
-  --out models/t5g1 --bf16 --batch 8 --accum 2
+  --out models/t5g-full --bf16
 
 # dataset dari HF langsung (on-the-fly tokenize)
 python src/finetune.py --model-family mt5-small \
@@ -91,7 +90,7 @@ python src/finetune.py --model-family mt5-small \
 ## Inference
 
 ```bash
-python src/inference.py --model-family mt5-small --adapter models/mt5s1/final \
+python src/inference.py --adapter models/umt5-full/final \
   --lang id --text "No. 24; Diperbarui Maret 2011  \nKlik di sini..."
 ```
 

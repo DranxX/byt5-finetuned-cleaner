@@ -2,8 +2,8 @@
 finetune.py — LoRA fine-tune untuk text cleaning (raw -> clean).
 
 Pakai config arsitektur dari config.py:
-  --model-family mt5-small      # google/mt5-small (default, tercepat di 8 GB)
-  --model-family t5gemma-270m   # google/t5gemma-2-270m-270m (gated: login dulu)
+  --model-family umt5-base      # google/umt5-base (DEFAULT, pipeline utama, 580M)
+  --model-family t5gemma-270m   # google/t5gemma-2-270m-270m (opsional, lain waktu)
   --model-family byt5-medium    # legacy byte-level (baseline saja, OOM-prone)
 
 Dataset:
@@ -186,8 +186,8 @@ def preprocess_logits_for_metrics(logits, labels):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--model-family", default="mt5-small",
-                    help="mt5-small | t5gemma-270m | byt5-medium (legacy)")
+    ap.add_argument("--model-family", default="umt5-base",
+                    help="umt5-base (default/utama) | t5gemma-270m | byt5-medium (legacy)")
     ap.add_argument("--data-dir", default=None, help="folder parquet lokal")
     ap.add_argument("--hf-dataset", default=None, help="atau HF dataset id")
     ap.add_argument("--out", required=True)
@@ -287,7 +287,7 @@ def main():
         gradient_checkpointing=True,
         # PENTING: fp16=False utk mT5 — fp16 bikin forward overflow (loss nan).
         # Di GPU tanpa bf16 (T4): biarkan fp32 penuh (bf16 off => fp16 off dgn flag ini)
-        fp16=False,   # dilarang; mt5 + fp16 = NaN (verified). T5Gemma aman bf16 di Ampere
+        fp16=False,   # dilarang; T5-family (umt5/mt5) + fp16 = NaN (verified)
         bf16=args.bf16,
         optim=args.optim,
         learning_rate=args.lr,

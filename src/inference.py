@@ -2,9 +2,9 @@
 inference.py — load base + adapter LoRA, clean dirty text.
 
 Pakai config dari config.py (sama dengan finetune.py):
-  python src/inference.py --model-family mt5-small --adapter models/mt5s1/final --text "..."
+  python src/inference.py --model-family umt5-base --adapter models/umt5-full/final --text "..."
   python src/inference.py --model-family t5gemma-270m --adapter models/t5g1/final --text "..."
-  python src/inference.py --model-family mt5-small --base /local/path --text "..."   # offline
+  python src/inference.py --model-family t5gemma-270m --base /local/path --text "..."  # offline
 
 Legacy ByT5 (byte-level) juga didukung utk pembanding adapter lama.
 """
@@ -60,7 +60,7 @@ def clean(model, tok, text, lang, device, max_new_tokens=4096, num_beams=1,
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--adapter", required=True)
-    ap.add_argument("--model-family", default="mt5-small")
+    ap.add_argument("--model-family", default="umt5-base")
     ap.add_argument("--base", default=None, help="override base model repo/local path")
     ap.add_argument("--text", required=True)
     ap.add_argument("--lang", default="id", choices=["id", "en", "zh"])

@@ -9,8 +9,8 @@ tapi kalimatnya fiktif. 2 test terakhir (indomain-*) dari corpus sebagai
 pembanding.
 
 Usage:
-  python src/eval_cases.py --adapter models/mt5s-full/final
-  python src/eval_cases.py --adapter models/mt5g-full/final --model-family t5gemma-270m
+  python src/eval_cases.py --adapter models/umt5-full/final
+  python src/eval_cases.py --adapter models/t5g-full/final --model-family t5gemma-270m
   python src/eval_cases.py --adapter ... --beams 4 --min-new 40   # mitigation kepotong
 """
 import argparse
@@ -50,7 +50,7 @@ CASES = [
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--adapter", required=True)
-    ap.add_argument("--model-family", default="mt5-small")
+    ap.add_argument("--model-family", default="umt5-base")
     ap.add_argument("--base", default=None, help="override repo base (mis. snapshot offline)")
     ap.add_argument("--beams", type=int, default=1,
                     help="greedy cukup utk smoke test; 4 kalau mau quality (4x lambat)")

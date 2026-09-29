@@ -138,13 +138,13 @@ def check_torch_and_gpu():
             vram = f"{total:.1f} GB"
         ok(f"GPU {i}: {props.name} | sm_{cap[0]}{cap[1]} | VRAM {vram}")
         if not bf16:
-            warn(f"GPU {i}: gak support bf16 — JANGAN pakai fp16 utk mt5 (overflow); "
+            warn(f"GPU {i}: gak support bf16 — JANGAN pakai fp16 utk umt5/T5-family (overflow); "
                  f"biarkan fp32 & pakai --batch 4 --accum 4")
         if total < 8:
             warn(f"GPU {i}: VRAM < 8 GB — pakai batch kecil")
     bf16_flag = " --bf16" if (gpu_caps and min(gpu_caps) >= (8, 0)) else ""
-    suggest = (f"--model-family mt5-small --batch 8 --accum 2{bf16_flag}"
-               if total >= 8 else f"--model-family mt5-small --batch 4 --accum 4{bf16_flag}")
+    suggest = (f"--model-family umt5-base --batch 8 --accum 2{bf16_flag}"
+               if total >= 8 else f"--model-family umt5-base --batch 4 --accum 4{bf16_flag}")
     cuda_ok = True
 
 
@@ -180,7 +180,7 @@ def check_flash_attn():
     try:
         import flash_attn  # noqa: F401
         warn("flash-attn terinstall tapi TIDAK akan dipakai:")
-        print("         mt5 & t5gemma2 gak support FA2 di transformers (verified).")
+        print("         umt5 & t5gemma2 gak support FA2 di transformers (verified).")
         print("         SDPA dipakai otomatis. FA2 cuma buang ruang, gak masalah.")
     except ImportError:
         ok("flash-attn gak terinstall — benar, gak dibutuhkan (SDPA default)")
