@@ -42,55 +42,42 @@ def encode_text(s: str, max_len: int, family: str):
 
 
 class RawDataset(Dataset):
-    """Parquet lang/raw/clean, tokenize on-the-fly via AutoTokenizer (hf family)."""
+    """Rows (lang, raw, clean) dari parquet lokal ATAU HF dataset — tokenize on-the-fly.
 
-    def __init__(self, data_dir, tokenizer, cfg, max_input, max_target):
+    Satu class buat dua sumber. 1.43M rows x ~1.5KB rata2 = ~2-3 GB RAM (raw
+    strings), aman di RAM 16 GB. Layout data/ (snapshot HF) di-scan rekursif.
+    """
+
+    def __init__(self, rows, tokenizer, max_input, max_target):
+        self.rows = rows
+        self.tok = tokenizer
+        self.max_input = max_input
+        self.max_target = max_target
+
+    @classmethod
+    def from_parquet(cls, data_dir, tokenizer, max_input, max_target):
         import glob
         import pyarrow.parquet as pq
-        files = sorted(glob.glob(os.path.join(data_dir, "*.parquet")))
+        files = sorted(glob.glob(os.path.join(data_dir, "**/*.parquet"), recursive=True))
         if not files:
-            raise SystemExit(f"tidak ada parquet di {data_dir}")
-        self.langs, self.raws, self.cleans = [], [], []
+            raise SystemExit(f"tidak ada parquet di {data_dir} (scan rekursif, termasuk data/)")
+        rows = []
         for fn in files:
             t = pq.read_table(fn, columns=["lang", "raw", "clean"])
-            self.langs.extend(t.column("lang").to_pylist())
-            self.raws.extend(t.column("raw").to_pylist())
-            self.cleans.extend(t.column("clean").to_pylist())
-        self.tok = tokenizer
-        self.cfg = cfg
-        self.max_input = max_input
-        self.max_target = max_target
-        print(f"loaded {len(self.raws):,} rows dari {len(files)} file")
+            rows.extend(t.to_pylist())
+        print(f"loaded {len(rows):,} rows dari {len(files)} file parquet")
+        return cls(rows, tokenizer, max_input, max_target)
+
+    @classmethod
+    def from_hf(cls, hf_ds, tokenizer, max_input, max_target):
+        return cls(hf_ds, tokenizer, max_input, max_target)
 
     def __len__(self):
-        return len(self.raws)
+        return len(self.rows)
 
     def __getitem__(self, idx):
+        ex = self.rows[idx]
         # prefix bahasa membantu model multilingual tau target bahasa apa
-        src = f"<{self.langs[idx]}> {self.raws[idx]}"
-        enc = self.tok(src, truncation=True, max_length=self.max_input)
-        lab = self.tok(self.cleans[idx], truncation=True, max_length=self.max_target)
-        return {
-            "input_ids": np.asarray(enc["input_ids"], dtype=np.int64),
-            "labels": np.asarray(lab["input_ids"], dtype=np.int64),
-        }
-
-
-class HFRawDataset(Dataset):
-    """HF dataset (lang/raw/clean), tokenize on-the-fly."""
-
-    def __init__(self, hf_ds, tokenizer, cfg, max_input, max_target):
-        self.ds = hf_ds
-        self.tok = tokenizer
-        self.cfg = cfg
-        self.max_input = max_input
-        self.max_target = max_target
-
-    def __len__(self):
-        return len(self.ds)
-
-    def __getitem__(self, idx):
-        ex = self.ds[idx]
         src = f"<{ex['lang']}> {ex['raw']}"
         enc = self.tok(src, truncation=True, max_length=self.max_input)
         lab = self.tok(ex["clean"], truncation=True, max_length=self.max_target)
@@ -98,7 +85,6 @@ class HFRawDataset(Dataset):
             "input_ids": np.asarray(enc["input_ids"], dtype=np.int64),
             "labels": np.asarray(lab["input_ids"], dtype=np.int64),
         }
-
 
 class ByteDataset(Dataset):
     """Legacy ByT5: parquet dgn input_ids/labels byte-level (dari pretokenizer lama)."""
@@ -230,18 +216,17 @@ def main():
     if cfg.tokenizer == "hf":
         tok = AutoTokenizer.from_pretrained(cfg.repo)
         if args.data_dir:
-            full = RawDataset(args.data_dir, tok, cfg, max_input, max_target)
-        else:
-            from datasets import load_dataset
-            ds = load_dataset(args.hf_dataset, split="train").train_test_split(
-                test_size=args.val_frac, seed=args.seed)
-            full = HFRawDataset(ds["train"], tok, cfg, max_input, max_target)
-            val_ds = HFRawDataset(ds["test"], tok, cfg, max_input, max_target)
-        if args.data_dir:
+            full = RawDataset.from_parquet(args.data_dir, tok, max_input, max_target)
             n_val = int(len(full) * args.val_frac)
             train_ds, val_ds = torch.utils.data.random_split(
                 full, [len(full) - n_val, n_val],
                 generator=torch.Generator().manual_seed(args.seed))
+        else:
+            from datasets import load_dataset
+            ds = load_dataset(args.hf_dataset, split="train").train_test_split(
+                test_size=args.val_frac, seed=args.seed)
+            train_ds = RawDataset.from_hf(ds["train"], tok, max_input, max_target)
+            val_ds = RawDataset.from_hf(ds["test"], tok, max_input, max_target)
     else:
         # legacy byt5: parquet sudah pretokenized byte-level
         full = ByteDataset(args.data_dir)

@@ -64,7 +64,10 @@ def main():
     ap.add_argument("--text", required=True)
     ap.add_argument("--lang", default="id", choices=["id", "en", "zh"])
     ap.add_argument("--max-new", type=int, default=512)
-    ap.add_argument("--beams", type=int, default=1)
+    ap.add_argument("--beams", type=int, default=4,
+                    help=">1 bantu cegah EOS premature (pilot: beams=4 fix kepotong)")
+    ap.add_argument("--min-new", type=int, default=40,
+                    help="anti EOS premature; 0 utk teks pendek yang memang pendek")
     args = ap.parse_args()
 
     import sys, os
@@ -73,7 +76,8 @@ def main():
     cfg = get_config(args.model_family)
 
     model, tok, device = load_model(args.adapter, cfg, args.base)
-    result = clean(model, tok, args.text, args.lang, device, args.max_new, args.beams)
+    result = clean(model, tok, args.text, args.lang, device, args.max_new,
+                   args.beams, min_new_tokens=args.min_new)
     print("LANG :", args.lang)
     print("RAW  :", args.text[:200])
     print("CLEAN:", result)

@@ -27,8 +27,11 @@ Baca dokumen ini SEBELUM melakukan apa pun. Jangan improvisasi.
    TIDAK mendukung FA2 (verified dari source transformers). SDPA = default.
 5. **Training di CPU itu jalur mati.** 1.43M rows di CPU = berminggu-minggu.
    Kalau GPU gak terdeteksi: fix torch (README § Install), bukan paksa CPU.
-6. Kalau butuh konteks dataset (statistik panjang, komposisi, duplikat): baca
-   `../merged/data.md`. Jangan scan dataset sendiri tanpa perlu.
+6. Statistik dataset penting (ringkas): 1,431,369 rows — id 73.6% (median
+   input 234 char), en 20.5% (median 4,129 char, p95 17K!), zh 5.8%. Median
+   output clean (id) 136 char. Duplikat 0.03%. FA2 gak didukung arch mana
+   pun di config. Detail lengkap ada di repo `experiments/merged/data.md`
+   (bukan bagian repo ini — owner yang punya).
 
 ## LINGKUNGAN MESIN TRAINING (pemilik: Windows, drive D)
 
@@ -110,24 +113,34 @@ snapshot_download("DranxX/corpus-cleaning-v1", repo_type="dataset",
                   local_dir="dataset", allow_patterns=["data/*.parquet"])
 PY
 
-# 4. FULL TRAINING di 3070 Ti (semua default udah hasil pilot — jangan diubah):
+# 4. FULL TRAINING di 3070 Ti — SEMUA DEFAULT udah hasil pilot, jangan diubah:
 python src/finetune.py --model-family mt5-small --data-dir dataset \
   --out models/mt5s-full --bf16 --batch 16 --accum 1
-#   (lr 3e-5, r16/a32... tunggu: default r=32/alpha=64 — utk full training di
-#    3070 Ti, r=32 OK karena bf16 + data 8x lebih beragam. Kalau loss nan
-#    di 1000 step pertama, turunin: --lora-r 16 --lora-alpha 32)
-# kalau bitsandbytes aman & VRAM sempit, boleh --optim paged_adamw_8bit
+#   default: lr 3e-5 | r16/alpha32 | warmup 500 | clip 1.0 | adamw_torch |
+#            fp16 OFF | eval 1000 / save 2000 | val 1% capped 4000 rows
+#   durasi est: 85K step/epoch @ ~2.5-3.5 it/s bf16 = ~8-12 jam/epoch, 2 epoch.
+#   Kalau loss nan di 1000 step pertama: jangan panik, baca output (nan
+#   ditampilkan jujur) -> turunin --lora-r 8 --lora-alpha 16 & --lr 1e-5.
+#   Lanjut epoch ekstra: python src/finetune.py ... (resume otomatis dari
+#   checkpoint terakhir di folder --out yang sama).
 
 python src/finetune.py --model-family t5gemma-270m --data-dir dataset \
   --out models/t5g-full --bf16 --batch 8 --accum 2
 
-# 5. inference (default udah bawa mitigation pilot: rep-penalty, no-repeat, sentinel-strip)
+# 5. inference (default udah bawa mitigation pilot: rep-penalty 1.2, no-repeat 4,
+#    beams 4, min-new 40, sentinel-strip)
 python src/inference.py --model-family mt5-small --adapter models/mt5s-full/final \
   --lang id --text "teks kotor di sini"
+
+# 6. WAJIB setelah training: jalankan smoke test 7 kasus (5 out-of-corpus
+#    + 2 in-domain) — teks dijamin gak ada di corpus (verified substring+hash):
+python src/eval_cases.py --adapter models/mt5s-full/final
 ```
 
-Urutan kerja agent: **check_env exit 0 -> dataset -> mt5-small full -> evaluasi
-(ekspektasi val loss < 1.0 di id) -> baru t5gemma-270m -> bandingkan**.
+Urutan kerja agent: **check_env exit 0 -> dataset -> mt5-small full ->
+`eval_cases.py` (5 ood + 2 in-domain; target: konten utuh, tanpa repetition,
+boilerplate terbuang) -> t5gemma-270m full -> bandingkan keduanya**.
+Ekspektasi val loss: < 1.0 itu bagus; 2.25 = hasil pilot 1-shard (baseline).
 
 Offline t5gemma: `--base temp/runtime` (snapshot lokal lengkap).
 
