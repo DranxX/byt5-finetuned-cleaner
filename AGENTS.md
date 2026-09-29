@@ -30,6 +30,34 @@ Baca dokumen ini SEBELUM melakukan apa pun. Jangan improvisasi.
 6. Kalau butuh konteks dataset (statistik panjang, komposisi, duplikat): baca
    `../merged/data.md`. Jangan scan dataset sendiri tanpa perlu.
 
+## LINGKUNGAN MESIN TRAINING (pemilik: Windows, drive D)
+
+Pemilik pengen SEMUA artefak besar di **drive D**, bukan drive sistem (C:).
+1. **Buat & pakai venv di drive D** (atau di dalam repo ini), contoh:
+   ```powershell
+   D:\Python\python -m venv D:\venvs\corpus-finetuned
+   D:\venvs\corpus-finetuned\Scripts\python -m pip install ...
+   ```
+   Semua command python/pip nanti WAJIB lewat venv itu — JANGAN python global,
+   JANGAN bikin venv baru di tempat lain (penyebab klasik "udah install CUDA
+   kok tetep kebaca CPU" = beda python). Kalau repo di-clone ke D, venv di
+   `<repo>\.venv` juga boleh.
+2. **Bersihin cache lama SEBELUM training baru** (bekas eksperimen byt5 lama
+   & dataset lama):
+   ```powershell
+   # cache HF (model & dataset lama) — bisa puluhan GB
+   D:\venvs\corpus-finetuned\Scripts\huggingface-cli delete-cache
+   # atau langsung:
+   rmdir /s /q %USERPROFILE%\.cache\huggingface
+   # cache pip
+   pip cache purge
+   # artefak lama di repo (kalau ada): models/, dataset/, temp/, data_tok/
+   ```
+   setelah bersih, verifikasi sisa disk >= 30 GB (check_env.py juga ngecek).
+3. Dataset & model snapshot taruh di `dataset/` dan `temp/` dalam repo (di
+   drive D), BUKAN `%USERPROFILE%\.cache` — supaya gak dobel di C:.
+   `check_env.py --data-dir dataset` untuk validasi.
+
 ## Arsitektur model — pakai config.py, JANGAN hardcode
 
 Dua config resmi (`src/config.py`):
@@ -101,4 +129,6 @@ Offline t5gemma: `--base temp/runtime` (snapshot lokal lengkap).
 - `t5gemma-270m`: load dari `temp/runtime` OK, LoRA inject (252 params dapat
   grad), forward-backward OK, generate OK (transformers 4.55.x, CPU bf16).
 - `mt5-small`: load OK, LoRA inject OK, forward-backward OK.
+- `mt5-small`: pilot end-to-end di Colab T4 (1 shard, LoRA train, generate) —
+  berhasil; catatan pilot ada di `notebook.md` (lokal, gak di-commit).
 - check_env.py mendeteksi & memberi solusi utk semua kasus di tabel atas.
