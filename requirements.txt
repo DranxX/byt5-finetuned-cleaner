@@ -14,7 +14,9 @@
 transformers==4.55.4        # dukung mt5 + t5gemma2 + Trainer gradient_checkpointing_kwargs
 datasets==3.2.0
 accelerate==1.4.0           # MINIMAL 1.3: transformers 4.55 panggil unwrap_model(keep_torch_compile=...) yang gak ada di 1.2.x
-peft==0.14.0
+peft==0.14.0                # NOTE: gak kompatibel dgn torchao <0.16 (yang pre-installed
+                            # di Colab/Kaggle) -> WAJIB: pip uninstall -y torchao
+                            # SEBELUM get_peft_model, di session yang sama
 sentencepiece==0.2.0        # tokenizer mT5/T5Gemma (SentencePiece)
 tokenizers>=0.21,<0.22      # fast tokenizer backend
 safetensors>=0.4.3
