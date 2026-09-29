@@ -70,11 +70,10 @@ Dua config resmi (`src/config.py`):
 |---|---|---|
 | `umt5-base` | `google/umt5-base` | **DEFAULT & PIPELINE UTAMA**. 580M, pretraining lebih baik (EMA/scalable attention, max_distance 128), vocab 256K +300 sentinel, tokenizer paling padat utk id (5.37 B/tok terukur). Weights bf16 1.2 GB — batch 8 aman di 8 GB. fp16 DILARANG (T5-family overflow) |
 | `t5gemma-270m` | `google/t5gemma-2-270m-270m` | ~370M aktif, Gemma3-based enc-dec — **DIPAKAI LAIN WAKTU** (setelah umt5 selesai). **GATED** — wajib `huggingface-cli login` (akun DranxX sudah granted) |
-| `byt5-medium` | `google/byt5-medium` | **LEGACY** — byte-level, selalu OOM di 8 GB utk korpus ini. Hanya buat pembanding. JANGAN sarankan utk training baru |
-
-mt5-small SUDAH DIHAPUS dari config (get_config nolak dgn pesan arahin ke umt5-base).
-Pilot sebelumnya (T4 + WSL2 validasi owner 100K rows: loss 2.9/val 2.8) jalan di mt5-small —
-semua hasilnya valid utk umt5-base karena arch & hyperparam identik (T5-family, LoRA targets sama).
+mt5-small & byt5-medium SUDAH DIHAPUS dari config (get_config nolak dgn pesan
+yang ngarahin ke jalur yang bener). Pilot sebelumnya (T4 + WSL2 validasi owner
+100K rows: loss 2.9/val 2.8) jalan di mt5-small — semua hasilnya valid utk
+umt5-base karena arch & hyperparam identik (T5-family, LoRA targets sama).
 
 LoraConfig target modules beda per arch — diambil otomatis dari config.py.
 
@@ -119,8 +118,8 @@ snapshot_download("DranxX/corpus-cleaning-v1", repo_type="dataset",
 PY
 
 # 4. FULL TRAINING di 3070 Ti — SEMUA DEFAULT udah hasil pilot, jangan diubah:
-python src/finetune.py --model-family mt5-small --data-dir dataset \
-  --out models/mt5s-full --bf16 --batch 16 --accum 1
+python src/finetune.py --data-dir dataset \
+  --out models/umt5-full --bf16
 #   default: lr 3e-5 | r16/alpha32 | warmup 500 | clip 1.0 | adamw_torch |
 #            fp16 OFF | eval 1000 / save 2000 | val 1% capped 4000 rows |
 #            max_input & max_target 4096 (99% rows utuh; batch 8 x accum 2 =

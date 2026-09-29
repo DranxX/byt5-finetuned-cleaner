@@ -4,7 +4,6 @@ finetune.py — LoRA fine-tune untuk text cleaning (raw -> clean).
 Pakai config arsitektur dari config.py:
   --model-family umt5-base      # google/umt5-base (DEFAULT, pipeline utama, 580M)
   --model-family t5gemma-270m   # google/t5gemma-2-270m-270m (opsional, lain waktu)
-  --model-family byt5-medium    # legacy byte-level (baseline saja, OOM-prone)
 
 Dataset:
   --data-dir  folder parquet dgn kolom lang/raw/clean ATAU input_ids/labels
@@ -20,27 +19,9 @@ import sys
 
 import numpy as np
 import torch
-from torch.utils.data import Dataset
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from config import get_config  # noqa: E402
-
-BYTE_OFFSET = 3   # hanya utk family byt5 (legacy)
-EOS_ID = 1
-
-
-# ---------------------------------------------------------------
-# Dataset
-# ---------------------------------------------------------------
-def encode_text(s: str, max_len: int, family: str):
-    """string -> list ids. hf = AutoTokenizer caller-side; byte = byte+3 manual."""
-    if family == "byt5":
-        ids = [b + BYTE_OFFSET for b in s.encode("utf-8")[:max_len]]
-        if len(ids) < max_len:
-            ids.append(EOS_ID)
-        return ids
-    raise ValueError("family gak dikenal utk encode manual")
-
 
 class ArrowRawDataset:
     """1.43M rows via HF datasets + .map(num_proc) — tokenize SEKALI, cache arrow.
@@ -105,44 +86,6 @@ class ArrowRawDataset:
             "labels": np.asarray(ex["labels"], dtype=np.int64),
         }
 
-class ByteDataset(Dataset):
-    """Legacy ByT5: parquet dgn input_ids/labels byte-level (dari pretokenizer lama)."""
-
-    def __init__(self, data_dir):
-        import glob
-        import pyarrow.parquet as pq
-        files = sorted(glob.glob(os.path.join(data_dir, "train-*.parquet")))
-        if not files:
-            raise SystemExit(f"tidak ada parquet train-* di {data_dir}")
-        in_flat, in_off = [], [0]
-        lab_flat, lab_off = [], [0]
-        for fn in files:
-            t = pq.read_table(fn, columns=["input_ids", "labels"])
-            for col, flat, off in (("input_ids", in_flat, in_off),
-                                   ("labels", lab_flat, lab_off)):
-                for arr in t.column(col).chunks:
-                    vals = np.asarray(arr.values, dtype=np.int32)
-                    offs = np.asarray(arr.offsets, dtype=np.int64)
-                    start = int(offs[0])
-                    flat.append(vals[start:int(offs[-1])])
-                    off.extend((offs[1:] - start + off[-1]).tolist())
-        self.input_ids = np.concatenate(in_flat) if in_flat else np.empty(0, np.int32)
-        self.labels = np.concatenate(lab_flat) if lab_flat else np.empty(0, np.int32)
-        self.input_offsets = np.asarray(in_off, dtype=np.int64)
-        self.label_offsets = np.asarray(lab_off, dtype=np.int64)
-        print(f"loaded {len(self.input_offsets) - 1:,} rows (byte-level flat, "
-              f"{(self.input_ids.nbytes + self.labels.nbytes) / 2**30:.2f} GB)")
-
-    def __len__(self):
-        return len(self.input_offsets) - 1
-
-    def __getitem__(self, idx):
-        return {
-            "input_ids": self.input_ids[self.input_offsets[idx]:self.input_offsets[idx + 1]].astype(np.int64),
-            "labels": self.labels[self.label_offsets[idx]:self.label_offsets[idx + 1]].astype(np.int64),
-        }
-
-
 class PadCollator:
     """Dynamic padding; label pad = -100 (ignored di loss)."""
 
@@ -187,7 +130,7 @@ def preprocess_logits_for_metrics(logits, labels):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model-family", default="umt5-base",
-                    help="umt5-base (default/utama) | t5gemma-270m | byt5-medium (legacy)")
+                    help="umt5-base (default/utama) | t5gemma-270m (opsional)")
     ap.add_argument("--data-dir", default=None, help="folder parquet lokal")
     ap.add_argument("--hf-dataset", default=None, help="atau HF dataset id")
     ap.add_argument("--out", required=True)
@@ -241,22 +184,12 @@ def main():
     from peft import LoraConfig, TaskType, get_peft_model
 
     # ---- tokenizer + dataset
-    if cfg.tokenizer == "hf":
-        tok = AutoTokenizer.from_pretrained(cfg.repo)
-        # tokenize SEKALI via .map(num_proc) + cache arrow (memory-mapped);
-        # group_by_length baca kolom "length" tanpa iterasi penuh
-        train_ds, val_ds, n_train, n_val = ArrowRawDataset.load(
-            args.data_dir, args.hf_dataset, tok, max_input, max_target,
-            args.val_frac, args.seed, args.val_max, args.num_proc)
-    else:
-        # legacy byt5: parquet sudah pretokenized byte-level
-        full = ByteDataset(args.data_dir)
-        tok = None
-        n_val = int(len(full) * args.val_frac)
-        train_ds, val_ds = torch.utils.data.random_split(
-            full, [len(full) - n_val, n_val],
-            generator=torch.Generator().manual_seed(args.seed))
-        n_train = len(train_ds)
+    tok = AutoTokenizer.from_pretrained(cfg.repo)
+    # tokenize SEKALI via .map(num_proc) + cache arrow (memory-mapped);
+    # group_by_length baca kolom "length" tanpa iterasi penuh
+    train_ds, val_ds, n_train, n_val = ArrowRawDataset.load(
+        args.data_dir, args.hf_dataset, tok, max_input, max_target,
+        args.val_frac, args.seed, args.val_max, args.num_proc)
 
     print(f"train: {n_train:,} | val: {n_val:,}")
 
@@ -312,7 +245,7 @@ def main():
         seed=args.seed,
     )
 
-    collator = PadCollator(pad_id=tok.pad_token_id if tok else 0)
+    collator = PadCollator(pad_id=tok.pad_token_id)
     trainer = Trainer(
         model=model,
         args=targs,
@@ -327,8 +260,7 @@ def main():
     # ---- save adapter + tokenizer
     save_dir = os.path.join(args.out, "final")
     model.save_pretrained(save_dir)
-    if tok is not None:
-        tok.save_pretrained(save_dir)
+    tok.save_pretrained(save_dir)
     print(f"saved adapter -> {save_dir}")
 
 

@@ -13,7 +13,7 @@ val 2.8). Full training 1.43M rows belum dijalankan — jadwal & hasil menyusul.
 - **Config arsitektur (lihat `src/config.py`):**
   1. `umt5-base` → `google/umt5-base` — **580M, pipeline utama**. Pretraining lebih baik dari mT5 (EMA/scalable attention), vocab 256K, tokenizer paling padat utk id
   2. `t5gemma-270m` → `google/t5gemma-2-270m-270m` — ~370M aktif, sliding window 4096, **gated repo** (dipakai lain waktu)
-  3. `byt5-medium` → legacy baseline (byte-level, OOM-prone — jangan dipakai training serius)
+  (arsitektur byte-level ByT5 dihapus total — selalu OOM di 8 GB utk korpus ini)
 
 ## ATURAN #1: checkup dulu, no exceptions
 

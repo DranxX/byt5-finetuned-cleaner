@@ -238,9 +238,6 @@ def check_models():
     head("Model HF (config arsitektur)")
     from huggingface_hub import hf_hub_download
     for key, c in CONFIGS.items():
-        if key == "byt5-medium":
-            print(f"  [SKIP] {key}: legacy baseline, gak dicek")
-            continue
         try:
             hf_hub_download(c.repo, "config.json")
             ok(f"{key}: {c.repo} bisa diakses")
