@@ -1,9 +1,13 @@
-# corpus-finetuned
+# corpus-cleaner
 
-LoRA fine-tune toolkit untuk **text cleaning / denoising**: teks kotor masuk,
-teks bersih keluar. Meneruskan project sebelumnya `byt5-finetuned` — arsitektur
-ByT5 di-drop karena byte-level (1 byte = 1 token) selalu OOM di RTX 3070 Ti 8 GB
-untuk korpus ini, diganti dua arsitektur subword encoder-decoder.
+**v0.1** — LoRA fine-tune toolkit untuk **text cleaning / denoising**: teks
+kotor masuk, teks bersih keluar. Dua arsitektur subword encoder-decoder
+(ByT5 byte-level di-drop — 1 byte = 1 token selalu OOM di RTX 3070 Ti 8 GB
+utk korpus ini).
+
+**Status v0.1: pipeline teruji end-to-end** (pilot T4 Colab: 178K rows,
+val loss 2.25; validasi ulang 100K rows di WSL2/Kaggle oleh owner: loss 2.9 /
+val 2.8). Full training 1.43M rows belum dijalankan — jadwal & hasil menyusul.
 
 - **Dataset:** [DranxX/corpus-cleaning-v1](https://huggingface.co/datasets/DranxX/corpus-cleaning-v1) — 1,431,369 pair raw→clean (id 73.6% / en 20.5% / zh 5.8%)
 - **Config arsitektur (lihat `src/config.py`):**
@@ -95,7 +99,7 @@ Format input training: `<{lang}> {raw}` — prefix bahasa wajib ada di inference
 ## Directory layout
 
 ```
-corpus-finetuned/
+corpus-cleaner/
 ├── AGENTS.md             ← PANDUAN AGENT (baca dulu sebelum ngapa-ngapain)
 ├── Readme.md             ← file ini
 ├── requirements.txt      ← pin yang diuji; urutan install di atas

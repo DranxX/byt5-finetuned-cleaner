@@ -1,9 +1,9 @@
 # AGENTS.md — panduan untuk AI agent
 
-Ini project **corpus-finetuned**: LoRA fine-tune toolkit untuk
+Ini project **corpus-cleaner**: LoRA fine-tune toolkit untuk
 text cleaning (raw → clean) di dataset `DranxX/corpus-cleaning-v1` (1.43M rows,
 id/en/zh). Hardware target: **RTX 3070 Ti 8 GB** milik pemilik akun, OS Windows
-(bisa juga WSL2/Kaggle T4 sudah teruji di 100k row dan berhasil dengan loss 2.9 dan val loss 2.8).
+(bisa juga WSL2/Kaggle T4 — sudah teruji sendiri oleh owner di 100K rows: loss 2.9 / val 2.8).
 
 Baca dokumen ini SEBELUM melakukan apa pun. Jangan improvisasi.
 
@@ -39,8 +39,8 @@ Baca dokumen ini SEBELUM melakukan apa pun. Jangan improvisasi.
 Pemilik pengen SEMUA artefak besar di **drive D**, bukan drive sistem (C:).
 1. **Buat & pakai venv di drive D** (atau di dalam repo ini), contoh:
    ```powershell
-   D:\Python\python -m venv D:\venvs\corpus-finetuned
-   D:\venvs\corpus-finetuned\Scripts\python -m pip install ...
+   D:\Python\python -m venv D:\venvs\corpus-cleaner
+   D:\venvs\corpus-cleaner\Scripts\python -m pip install ...
    ```
    Semua command python/pip nanti WAJIB lewat venv itu — JANGAN python global,
    JANGAN bikin venv baru di tempat lain (penyebab klasik "udah install CUDA
@@ -50,7 +50,7 @@ Pemilik pengen SEMUA artefak besar di **drive D**, bukan drive sistem (C:).
    & dataset lama):
    ```powershell
    # cache HF (model & dataset lama) — bisa puluhan GB
-   D:\venvs\corpus-finetuned\Scripts\huggingface-cli delete-cache
+   D:\venvs\corpus-cleaner\Scripts\huggingface-cli delete-cache
    # atau langsung:
    rmdir /s /q %USERPROFILE%\.cache\huggingface
    # cache pip
@@ -77,7 +77,7 @@ LoraConfig target modules beda per arch — diambil otomatis dari config.py.
 ## Struktur file
 
 ```
-corpus-finetuned/
+corpus-cleaner/
 ├── AGENTS.md            ← file ini
 ├── Readme.md            ← install, usage, tabel VRAM
 ├── requirements.txt     ← pin teruji + urutan install Windows (torch dulu!)

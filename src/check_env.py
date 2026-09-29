@@ -391,7 +391,7 @@ def main():
     ap.add_argument("--no-model", action="store_true", help="skip cek akses HF")
     args = ap.parse_args()
 
-    print("corpus-finetuned — environment doctor")
+    print("corpus-cleaner — environment doctor")
     print("WAJIB exit 0 sebelum finetune/inference. (AGENTS.md: gate ini buat semua agent)")
     check_python()
     check_torch_and_gpu()
