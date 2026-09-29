@@ -164,6 +164,17 @@ def main():
                          "paged_adamw_8bit cuma kalau VRAM bener-bener sempit")
     args = ap.parse_args()
 
+    # guard: group_by_length/length_column_name gak ada di transformers 5.x —
+    # "unexpected keyword group_by_length" = env lu bawa transformers salah versi
+    import transformers
+    major = int(transformers.__version__.split(".")[0])
+    if major != 4:
+        raise SystemExit(
+            f"transformers {transformers.__version__} terdeteksi — project ini diuji di 4.55.4.\n"
+            f"transformers 5.x ngapus group_by_length dll. Perbaiki environment:\n"
+            f"  python -m pip install transformers==4.55.4\n"
+            f"lalu jalankan python src/check_env.py (harus exit 0) sebelum training.")
+
     # guard: load_best_model_at_end mensyaratkan save_steps kelipatan eval_steps
     if args.save_steps % args.eval_steps != 0:
         raise SystemExit(
