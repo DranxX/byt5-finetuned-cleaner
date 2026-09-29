@@ -89,7 +89,31 @@ BYT5_MEDIUM = ModelConfig(
           "utk korpus ini. Hanya dipakai buat pembanding/ablation.",
 )
 
-CONFIGS = {c.key: c for c in (MT5_SMALL, T5GEMMA_270M, BYT5_MEDIUM)}
+
+# ---------------------------------------------------------------
+# CONFIG 3: UMT5-base — versi "upgrade" mT5: params sama kayak mt5-base (580M)
+# tapi pretrained berbeda (mC4 + EMA/scalable attention + max_distance 128),
+# vocab 256,384 (+300 extra_id). Tokenizer lebih padat utk id (5.37 vs 4.43
+# B/tok — terukur). Model_type 'umt5' tersedia sejak transformers lama (4.46+).
+# ---------------------------------------------------------------
+UMT5_BASE = ModelConfig(
+    key="umt5-base",
+    repo="google/umt5-base",
+    family="t5",
+    tokenizer="hf",
+    # arsitektur = T5 family (verified: modeling_umt5 = clone modeling_t5
+    # dgn class rename; bedanya cuma config: relative_attention_max_distance
+    # 128 & scalable_attention). LoRA targets sama dgn mt5.
+    lora_targets=["q", "k", "v", "o", "wi_0", "wi_1", "wo"],
+    max_input=4096,
+    max_target=4096,
+    attn="sdpa",                # FA2 gak didukung T5-family (sama dgn mt5)
+    notes="580M params | 256K vocab (+300 sentinel) | EMA-pretrained (lebih stabil) | "
+          "tie_word_embeddings=False | fp16 DILARANG (T5-family overflow, sama mt5) | "
+          "VRAM: weights bf16 1.2GB — batch 8 aman di 8GB",
+)
+
+CONFIGS = {c.key: c for c in (MT5_SMALL, T5GEMMA_270M, BYT5_MEDIUM, UMT5_BASE)}
 
 
 def get_config(key: str) -> ModelConfig:

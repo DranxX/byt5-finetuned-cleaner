@@ -14,6 +14,7 @@ Dataset:
 WAJIB: python src/check_env.py harus exit 0 dulu.
 """
 import argparse
+import hashlib
 import os
 import sys
 
@@ -41,49 +42,67 @@ def encode_text(s: str, max_len: int, family: str):
     raise ValueError("family gak dikenal utk encode manual")
 
 
-class RawDataset(Dataset):
-    """Rows (lang, raw, clean) dari parquet lokal ATAU HF dataset — tokenize on-the-fly.
+class ArrowRawDataset:
+    """1.43M rows via HF datasets + .map(num_proc) — tokenize SEKALI, cache arrow.
 
-    Satu class buat dua sumber. 1.43M rows x ~1.5KB rata2 = ~2-3 GB RAM (raw
-    strings), aman di RAM 16 GB. Layout data/ (snapshot HF) di-scan rekursif.
+    Kenapa bukan tokenize on-the-fly per __getitem__: tiap epoch re-tokenize
+    1.43M rows = buang ~40 menit CPU per epoch. Arrow cache memory-mapped ->
+    RAM stabil. Kolom "length" utk group_by_length tanpa iterasi penuh.
+
+    File parquet di-scan rekursif (termasuk data/ dari snapshot HF) + realpath
+    (dataset 3.2.0 gak bisa baca symlink cache HF via wildcard).
     """
 
-    def __init__(self, rows, tokenizer, max_input, max_target):
-        self.rows = rows
-        self.tok = tokenizer
-        self.max_input = max_input
-        self.max_target = max_target
+    def __init__(self, ds, pad_id):
+        self.ds = ds
+        self.pad_id = pad_id
 
     @classmethod
-    def from_parquet(cls, data_dir, tokenizer, max_input, max_target):
-        import glob
-        import pyarrow.parquet as pq
-        files = sorted(glob.glob(os.path.join(data_dir, "**/*.parquet"), recursive=True))
-        if not files:
-            raise SystemExit(f"tidak ada parquet di {data_dir} (scan rekursif, termasuk data/)")
-        rows = []
-        for fn in files:
-            t = pq.read_table(fn, columns=["lang", "raw", "clean"])
-            rows.extend(t.to_pylist())
-        print(f"loaded {len(rows):,} rows dari {len(files)} file parquet")
-        return cls(rows, tokenizer, max_input, max_target)
+    def load(cls, data_dir, hf_dataset, tok, max_input, max_target,
+             val_frac, seed, val_max, num_proc):
+        from datasets import load_dataset
+        cache_dir = os.path.join(data_dir or ".", ".hf_cache")
+        os.makedirs(cache_dir, exist_ok=True)
 
-    @classmethod
-    def from_hf(cls, hf_ds, tokenizer, max_input, max_target):
-        return cls(hf_ds, tokenizer, max_input, max_target)
+        if data_dir:
+            import glob
+            files = sorted(os.path.realpath(f) for f in
+                           glob.glob(os.path.join(data_dir, "**/*.parquet"), recursive=True))
+            if not files:
+                raise SystemExit(f"tidak ada parquet di {data_dir} (scan rekursif)")
+            ds = load_dataset("parquet", data_files={"train": files},
+                              split="train", cache_dir=cache_dir)
+            src_tag = hashlib.md5("|".join(files).encode()).hexdigest()[:8]
+        else:
+            ds = load_dataset(hf_dataset, split="train", cache_dir=cache_dir)
+            src_tag = hf_dataset.replace("/", "_")[:30]
+
+        def preprocess(ex):
+            src = f"<{ex['lang']}> {ex['raw']}"
+            enc = tok(src, truncation=True, max_length=max_input)
+            lab = tok(ex["clean"], truncation=True, max_length=max_target)
+            return {"input_ids": enc["input_ids"], "labels": lab["input_ids"],
+                    "length": len(enc["input_ids"])}
+
+        tag = f"tok_{src_tag}_in{max_input}_out{max_target}"
+        ds = ds.map(preprocess, num_proc=num_proc,
+                    remove_columns=[c for c in ds.column_names if c != "length"],
+                    desc="tokenize", cache_file_name=os.path.join(cache_dir, f"{tag}.arrow"))
+
+        split = ds.train_test_split(test_size=val_frac, seed=seed)
+        val = split["test"]
+        if len(val) > val_max:
+            val = val.shuffle(seed=seed).select(range(val_max))
+        return cls(split["train"], tok.pad_token_id or 0), cls(val, tok.pad_token_id or 0), len(split["train"]), len(val)
 
     def __len__(self):
-        return len(self.rows)
+        return len(self.ds)
 
     def __getitem__(self, idx):
-        ex = self.rows[idx]
-        # prefix bahasa membantu model multilingual tau target bahasa apa
-        src = f"<{ex['lang']}> {ex['raw']}"
-        enc = self.tok(src, truncation=True, max_length=self.max_input)
-        lab = self.tok(ex["clean"], truncation=True, max_length=self.max_target)
+        ex = self.ds[idx]
         return {
-            "input_ids": np.asarray(enc["input_ids"], dtype=np.int64),
-            "labels": np.asarray(lab["input_ids"], dtype=np.int64),
+            "input_ids": np.asarray(ex["input_ids"], dtype=np.int64),
+            "labels": np.asarray(ex["labels"], dtype=np.int64),
         }
 
 class ByteDataset(Dataset):
@@ -132,6 +151,9 @@ class PadCollator:
         self.label_pad = label_pad
 
     def __call__(self, features):
+        # kolom "length" (utk group_by_length) dibuang di sini kalau lolos
+        # dari remove_unused_columns — gak boleh nyasar ke model.forward
+        features = [{k: v for k, v in f.items() if k != "length"} for f in features]
         max_in = max(len(f["input_ids"]) for f in features)
         max_lab = max(len(f["labels"]) for f in features)
         batch_in, batch_lab, batch_attn = [], [], []
@@ -186,7 +208,11 @@ def main():
     ap.add_argument("--save-steps", type=int, default=400,
                     help="WAJIB kelipatan bulat dari --eval-steps (load_best_model_at_end)")
     ap.add_argument("--max-grad-norm", type=float, default=1.0)
-    ap.add_argument("--val-frac", type=float, default=0.05)
+    ap.add_argument("--val-frac", type=float, default=0.01)
+    ap.add_argument("--val-max", type=int, default=4000,
+                    help="cap jumlah row val (eval tiap N step jangan jadi bottleneck)")
+    ap.add_argument("--num-proc", type=int, default=4,
+                    help="proses paralel tokenize (.map); 1 kalau Windows rewel")
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--bf16", action="store_true", help="GPU Ampere+ (30xx/A100) — WAJIB di 3070 Ti")
     ap.add_argument("--attn", default=None, choices=[None, "sdpa", "eager"])
@@ -217,18 +243,11 @@ def main():
     # ---- tokenizer + dataset
     if cfg.tokenizer == "hf":
         tok = AutoTokenizer.from_pretrained(cfg.repo)
-        if args.data_dir:
-            full = RawDataset.from_parquet(args.data_dir, tok, max_input, max_target)
-            n_val = int(len(full) * args.val_frac)
-            train_ds, val_ds = torch.utils.data.random_split(
-                full, [len(full) - n_val, n_val],
-                generator=torch.Generator().manual_seed(args.seed))
-        else:
-            from datasets import load_dataset
-            ds = load_dataset(args.hf_dataset, split="train").train_test_split(
-                test_size=args.val_frac, seed=args.seed)
-            train_ds = RawDataset.from_hf(ds["train"], tok, max_input, max_target)
-            val_ds = RawDataset.from_hf(ds["test"], tok, max_input, max_target)
+        # tokenize SEKALI via .map(num_proc) + cache arrow (memory-mapped);
+        # group_by_length baca kolom "length" tanpa iterasi penuh
+        train_ds, val_ds, n_train, n_val = ArrowRawDataset.load(
+            args.data_dir, args.hf_dataset, tok, max_input, max_target,
+            args.val_frac, args.seed, args.val_max, args.num_proc)
     else:
         # legacy byt5: parquet sudah pretokenized byte-level
         full = ByteDataset(args.data_dir)
@@ -237,8 +256,9 @@ def main():
         train_ds, val_ds = torch.utils.data.random_split(
             full, [len(full) - n_val, n_val],
             generator=torch.Generator().manual_seed(args.seed))
+        n_train = len(train_ds)
 
-    print(f"train: {len(train_ds):,} | val: {len(val_ds):,}")
+    print(f"train: {n_train:,} | val: {n_val:,}")
 
     # ---- model + LoRA
     model = AutoModelForSeq2SeqLM.from_pretrained(cfg.repo, attn_implementation=attn)
@@ -286,6 +306,7 @@ def main():
         metric_for_best_model="eval_loss",
         greater_is_better=False,
         group_by_length=True,
+        length_column_name="length",
         dataloader_num_workers=2,
         report_to="none",
         seed=args.seed,

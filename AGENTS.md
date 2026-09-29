@@ -68,9 +68,12 @@ Dua config resmi (`src/config.py`):
 
 | key | repo | note |
 |---|---|---|
-| `mt5-small` | `google/mt5-small` | default. 300M, SDPA, zero-deps, tercepat di 8 GB |
+| `mt5-small` | `google/mt5-small` | 300M. Tercepat di 8 GB; pilot T4 + validasi WSL2 (owner, 100K rows: loss 2.9/val 2.8) pakai ini |
+| `umt5-base` | `google/umt5-base` | **UPGRADE mt5**: params sama dgn mt5-base (580M) tapi pretrained lebih baik (EMA/scalable attention, max_distance 128, vocab 256K +300 sentinel). Tokenizer lebih padat utk id (5.37 vs 4.43 B/tok terukur). Weights bf16 1.2 GB — batch 8 aman di 8 GB |
 | `t5gemma-270m` | `google/t5gemma-2-270m-270m` | ~370M aktif, Gemma3-based enc-dec. **GATED** — wajib `huggingface-cli login` (akun DranxX sudah granted) |
 | `byt5-medium` | `google/byt5-medium` | **LEGACY** — byte-level, selalu OOM di 8 GB utk korpus ini. Hanya buat pembanding. JANGAN sarankan utk training baru |
+
+**Rekomendasi urutan full training: mt5-small (validasi pipeline) -> umt5-base (kualitas utama) -> t5gemma-270m (pembanding).**
 
 LoraConfig target modules beda per arch — diambil otomatis dari config.py.
 
