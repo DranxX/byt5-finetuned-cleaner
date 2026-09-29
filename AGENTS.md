@@ -122,10 +122,13 @@ python src/finetune.py --data-dir dataset \
   --out models/umt5-full --bf16
 #   default: lr 3e-5 | r16/alpha32 | warmup 500 | clip 1.0 | adamw_torch |
 #            fp16 OFF | eval 1000 / save 2000 | val 1% capped 4000 rows |
-#            max_input & max_target 4096 (99% rows utuh; batch 8 x accum 2 =
-#            efektif 16 — batch 16 @ seq 4096 bakal OOM di 8GB, jangan)
-#   durasi est: ~10-15 jam/epoch @ bf16 (long-tail seq 4096 lambat; group_by_length
-#   bikin mayoritas batch pendek jalan cepet).
+#            max_input & max_target 4096 | batch 2 x accum 8 (eff 16)
+#   KENAPA BATCH 2: attention T5-family gak pake fused kernel (relative position
+#   bias dijumlah manual ke scores sebelum softmax) -> memory O(L^2) beneran.
+#   batch 4 @ 4096 = 3GB utk SATU softmax output = OOM di T4 16GB (terbukti).
+#   batch 2 @ 4096 bf16 di 8GB ~4GB peak = aman.
+#   durasi est: 12-18 jam/epoch (long-tail lambat; group_by_length bikin
+#   mayoritas batch pendek cepet).
 #   Kalau loss nan di 1000 step pertama: jangan panik, baca output (nan
 #   ditampilkan jujur) -> turunin --lora-r 8 --lora-alpha 16 & --lr 1e-5.
 #   Lanjut epoch ekstra: python src/finetune.py ... (resume otomatis dari

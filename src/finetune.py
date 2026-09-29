@@ -139,10 +139,11 @@ def main():
     ap.add_argument("--lora-r", type=int, default=32)
     ap.add_argument("--lora-alpha", type=int, default=64)
     ap.add_argument("--epochs", type=float, default=2.0)   # pilot terbukti: 1 epoch blm konvergen
-    ap.add_argument("--batch", type=int, default=8,
-                    help="seq 4096 (max budget) -> 8 aman di 8GB dgn ckpting. "
-                         "16 cuma kalau max 2048 ke bawah")
-    ap.add_argument("--accum", type=int, default=2)
+    ap.add_argument("--batch", type=int, default=2,
+                    help="WAJIB 2 utk budget 4096: attention umt5/mt5 = manual scores "
+                         "O(L^2), batch 4 butuh 3GB cuma utk softmax output (OOM terbukti). "
+                         "batch kecil + accum tinggi = eff batch tetap 16")
+    ap.add_argument("--accum", type=int, default=8)
     ap.add_argument("--lr", type=float, default=3e-5,
                     help="WAJIB KECIL utk mT5+LoRA: 2e-4 bikin loss diverge "
                          "(terbukti di T4: grad_norm ribuan -> nan). 1e-4 kalau udah stabil.")
