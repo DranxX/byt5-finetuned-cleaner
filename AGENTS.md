@@ -3,7 +3,7 @@
 Ini project **corpus-finetuned**: LoRA fine-tune toolkit untuk
 text cleaning (raw → clean) di dataset `DranxX/corpus-cleaning-v1` (1.43M rows,
 id/en/zh). Hardware target: **RTX 3070 Ti 8 GB** milik pemilik akun, OS Windows
-(bisa juga WSL2/Kaggle T4).
+(bisa juga WSL2/Kaggle T4 sudah teruji di 100k row dan berhasil dengan loss 2.9 dan val loss 2.8).
 
 Baca dokumen ini SEBELUM melakukan apa pun. Jangan improvisasi.
 
