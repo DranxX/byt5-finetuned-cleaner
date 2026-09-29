@@ -55,7 +55,7 @@ def main():
     ap.add_argument("--beams", type=int, default=4)
     ap.add_argument("--min-new", type=int, default=40,
                     help="anti-EOS-premature (length prior data synthetic)")
-    ap.add_argument("--max-new", type=int, default=512)
+    ap.add_argument("--max-new", type=int, default=2048)
     args = ap.parse_args()
 
     import torch

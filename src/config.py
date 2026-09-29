@@ -42,7 +42,9 @@ MT5_SMALL = ModelConfig(
     # mT5 = T5 arch: attention q,k,v,o + FFN wi_0/wi_1/wo (Gated GELU)
     lora_targets=["q", "k", "v", "o", "wi_0", "wi_1", "wo"],
     max_input=512,
-    max_target=512,             # p99 target = ~106 tok, tapi 512 utk long-tail en/zh
+    max_target=2048,            # full-scan: p99 target id=149 tok, en=6037 tok.
+                                # 2048 tok = ~96% row utuh (mt5). batch 16 mepet di
+                                # long-tail; ckpting menahan, batch 8 kalau OOM.
     attn="sdpa",                # T5-family GAK support FA2 — SDPA = tercepat tersedia
     notes="300M params | 250K vocab | median 92 tok utk rows id (73.6% korpus) | "
           "tanpa dependency kernel eksternal | "
@@ -63,7 +65,8 @@ T5GEMMA_270M = ModelConfig(
     lora_targets=["q_proj", "k_proj", "v_proj", "o_proj",
                    "gate_proj", "up_proj", "down_proj"],
     max_input=512,
-    max_target=512,
+    max_target=2048,            # sliding window 4096 di sisi attention; budget 2048
+                                # = ~97% row utuh (est).
     attn="sdpa",                # FA2 gak didukung arch ini (verified _supports_flash_attn=False)
     notes="~370M params | vocab 262K | sliding_window 4096 + full-attn layers | "
           "GATED repo: wajib `huggingface-cli login` + accept Gemma terms dulu | "

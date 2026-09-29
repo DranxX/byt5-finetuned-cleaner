@@ -28,9 +28,10 @@ Baca dokumen ini SEBELUM melakukan apa pun. Jangan improvisasi.
 5. **Training di CPU itu jalur mati.** 1.43M rows di CPU = berminggu-minggu.
    Kalau GPU gak terdeteksi: fix torch (README § Install), bukan paksa CPU.
 6. Statistik dataset penting (ringkas): 1,431,369 rows — id 73.6% (median
-   input 234 char), en 20.5% (median 4,129 char, p95 17K!), zh 5.8%. Median
-   output clean (id) 136 char. Duplikat 0.03%. FA2 gak didukung arch mana
-   pun di config. Detail lengkap ada di repo `experiments/merged/data.md`
+   input 234 char), en 20.5% (median 4,129 char, p95 17K!), zh 5.8%. TARGET
+   clean: id p99=149 tok / en p95=3407 tok / zh p95=639 tok (mt5) — makanya
+   max_target default 2048 (96% rows utuh; > itu truncate, chunking nanti).
+   Duplikat 0.03%. FA2 gak didukung arch mana pun di config. Detail lengkap ada di repo `experiments/merged/data.md`
    (bukan bagian repo ini — owner yang punya).
 
 ## LINGKUNGAN MESIN TRAINING (pemilik: Windows, drive D)
@@ -117,8 +118,10 @@ PY
 python src/finetune.py --model-family mt5-small --data-dir dataset \
   --out models/mt5s-full --bf16 --batch 16 --accum 1
 #   default: lr 3e-5 | r16/alpha32 | warmup 500 | clip 1.0 | adamw_torch |
-#            fp16 OFF | eval 1000 / save 2000 | val 1% capped 4000 rows
-#   durasi est: 85K step/epoch @ ~2.5-3.5 it/s bf16 = ~8-12 jam/epoch, 2 epoch.
+#            fp16 OFF | eval 1000 / save 2000 | val 1% capped 4000 rows |
+#            max-target 2048 (p99 id 149 tok, p95 en 3407 tok -> 2048 = 96% utuh)
+#   durasi est: 85K step/epoch, tapi long-tail seq 2048 bikin rata2 turun ->
+#   ~10-14 jam/epoch @ bf16. batch 16; kalau OOM di long-tail: --batch 8 --accum 2.
 #   Kalau loss nan di 1000 step pertama: jangan panik, baca output (nan
 #   ditampilkan jujur) -> turunin --lora-r 8 --lora-alpha 16 & --lr 1e-5.
 #   Lanjut epoch ekstra: python src/finetune.py ... (resume otomatis dari
