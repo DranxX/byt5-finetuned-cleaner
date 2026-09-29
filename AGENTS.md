@@ -136,12 +136,12 @@ python src/finetune.py --model-family t5gemma-270m --data-dir dataset \
 
 # 5. inference (default udah bawa mitigation pilot: rep-penalty 1.2, no-repeat 4,
 #    beams 4, min-new 40, sentinel-strip)
-python src/inference.py --model-family mt5-small --adapter models/mt5s-full/final \
+python src/inference.py --adapter models/umt5-full/final \
   --lang id --text "teks kotor di sini"
 
 # 6. WAJIB setelah training: jalankan smoke test 7 kasus (5 out-of-corpus
 #    + 2 in-domain) — teks dijamin gak ada di corpus (verified substring+hash):
-python src/eval_cases.py --adapter models/mt5s-full/final
+python src/eval_cases.py --adapter models/umt5-full/final
 ```
 
 Urutan kerja agent: **check_env exit 0 -> dataset -> umt5-base full ->
