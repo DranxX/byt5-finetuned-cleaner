@@ -13,3 +13,4 @@ dataset/
 data_tok/
 *.parquet
 *.jsonl
+temp/

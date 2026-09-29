@@ -1,24 +1,34 @@
-# Kaggle-tested (2024-12, T4 x2)
-# transformers 5.x gak kompatibel dgn peft 0.19 di beberapa path — pin yang teruji
-transformers==4.46.3
+# ============================================================
+# corpus-finetuned — pin yang diuji (3070 Ti 8GB / Windows+WSL / Kaggle T4)
+#
+# URUTAN INSTALL PENTING (Windows):
+#   1. python -m pip install torch --index-url https://download.pytorch.org/whl/cu124
+#   2. python -m pip install -r requirements.txt   (torch di-skip otomatis via marker)
+#   3. python src/check_env.py                      (wajib exit 0 sebelum training)
+#
+# Jangan naikin versi tanpa uji. T5Gemma-2 butuh arch `t5gemma2`
+# (transformers >= 4.50-ish); pin di bawah udah diuji load keduanya.
+# ============================================================
+
+# --- core training stack ---
+transformers==4.55.4        # dukung mt5 + t5gemma2 + Trainer gradient_checkpointing_kwargs
 datasets==3.2.0
 accelerate==1.2.1
 peft==0.14.0
-bitsandbytes==0.45.0
-sentencepiece==0.2.0
-tokenizers>=0.21
+sentencepiece==0.2.0        # tokenizer mT5/T5Gemma (SentencePiece)
+tokenizers>=0.21,<0.22      # fast tokenizer backend
+safetensors>=0.4.3
+
+# --- bitsandbytes: paged_adamw_8bit ---
+# Windows: butuh torch CUDA ke-install DULU (langkah 1 di atas), versi >=0.43
+# punya wheel Windows resmi. Kalau gagal build/import, training tetap bisa
+# jalan dgn --optim adamw_torch (lihat README troubleshooting).
+bitsandbytes>=0.45.0; sys_platform != "win32"
+bitsandbytes>=0.45.0; sys_platform == "win32"
+
+# --- data & util ---
 pyarrow>=18.0
-numpy>=1.26
+numpy>=1.26,<3.0
 
-# PyTorch — PENTING:
-# - Linux/Kaggle: wheel PyPI sudah bundling CUDA, aman.
-# - Windows: PyPI = build CPU-ONLY. torch sengaja DI-SKIP di Windows (marker di
-#   bawah) biar gak ada yang ke-install CPU diam-diam. Install manual DULU,
-#   baru requirements:
-#     pip install torch --index-url https://download.pytorch.org/whl/cu124
-#   Verifikasi: python src/check_env.py  (harus exit 0)
+# --- PyTorch: LIHAT CATATAN ATAS. skip di Windows biar gak ketimpa CPU wheel ---
 torch>=2.4.0,<3.0; sys_platform != "win32"
-
-# CATATAN Kaggle: torchao pre-installed (0.10.0) bikin PEFT raise ImportError
-# saat inject LoRA. Uninstall:
-#   pip uninstall -y torchao

@@ -1,117 +1,133 @@
-# ByT5-Finetuned Cleaner
+# corpus-finetuned
 
-LoRA fine-tune toolkit for **ByT5** text cleaning: dirty text in, clean text out.
+LoRA fine-tune toolkit untuk **text cleaning / denoising**: teks kotor masuk,
+teks bersih keluar. Meneruskan project sebelumnya `byt5-finetuned` — arsitektur
+ByT5 di-drop karena byte-level (1 byte = 1 token) selalu OOM di RTX 3070 Ti 8 GB
+untuk korpus ini, diganti dua arsitektur subword encoder-decoder.
 
-- **Dataset:** [DranxX/corpus-cleaning-v1](https://huggingface.co/datasets/DranxX/corpus-cleaning-v1) — 1.43M raw→clean pairs (id/en/zh)
-- **Base model:** [google/byt5-medium](https://huggingface.co/google/byt5-medium) (or `byt5-small` for quick tests)
+- **Dataset:** [DranxX/corpus-cleaning-v1](https://huggingface.co/datasets/DranxX/corpus-cleaning-v1) — 1,431,369 pair raw→clean (id 73.6% / en 20.5% / zh 5.8%)
+- **Config arsitektur (lihat `src/config.py`):**
+  1. `mt5-small` → `google/mt5-small` — 300M, SDPA, zero-dependency, **default**
+  2. `t5gemma-270m` → `google/t5gemma-2-270m-270m` — ~370M aktif, sliding window 4096, **gated repo** (perlu login HF + accept Gemma terms)
+  3. `byt5-medium` → legacy baseline saja (byte-level, OOM-prone, jangan dipakai training serius)
 
-## Install
-
-```bash
-pip install -r requirements.txt
-pip uninstall -y torchao   # Kaggle/older envs: PEFT 0.19 breaks on torchao < 0.16
-```
-
-> **Windows + GPU:** wheel `pip install torch` dari PyPI itu **CPU-only** —
-> seberapa sering di-install ulang pun hasilnya sama. Makanya `requirements.txt`
-> sengaja **skip torch di Windows**. Urutan yang bener:
->
-> ```bash
-> pip uninstall -y torch torchvision torchaudio
-> pip install torch --index-url https://download.pytorch.org/whl/cu124   # ← dulu
-> pip install -r requirements.txt                                        # torch di-skip otomatis
-> python src/check_env.py                                                # harus exit 0
-> ```
->
-> Pakai `python -m pip install ...` dan pastikan `python`-nya sama dengan yang
-> dipakai training — salah environment/venv adalah penyebab klasik
-> "udah install CUDA kok tetep kebaca CPU".
-
-## 0. Cek environment dulu
+## ATURAN #1: checkup dulu, no exceptions
 
 ```bash
 python src/check_env.py
 ```
 
-Ngecek: Python/OS, build torch (CPU vs CUDA — penyebab paling umum training
-nyasar ke CPU), GPU + VRAM + dukungan bf16, smoke test CUDA runtime,
-flash-attn — gak berlaku utk T5/ByT5 (arch gak didukung transformers), versi library vs pin
-di `requirements.txt`, dan sisa disk. Exit code `0` = siap,
-`1` = ada yang harus dibenerin dulu — bisa juga dipakai buat gate agent/CI.
+**Script apapun (finetune/inference) TIDAK BOLEH dijalankan sebelum
+`check_env.py` exit 0.** Ini berlaku juga untuk agent AI. Script ini mengecek:
 
-Output-nya sekalian ngasih rekomendasi flag (mis. `--batch 4 --accum 4 --bf16`
-buat 8GB). Kalau ternyata jalan di CPU: STOP, jangan lanjutin — 1.43M rows
-berhari-hari sampai berminggu-minggu. Perbaiki torch-nya, bukan script-nya.
+| # | Cek | Kenapa |
+|---|---|---|
+| 1 | Python + OS | versi minimal |
+| 2 | torch build CPU vs CUDA | Windows PyPI torch = CPU-only; biang kerok "training nyasar CPU" & OOM palsu |
+| 3 | GPU + VRAM + bf16 | 3070 Ti 8 GB target; bf16 wajib di Ampere |
+| 4 | Library vs pin | versi lain sering rusak (PEFT/transformers mismatch) |
+| 5 | flash-attn | harus **tidak** dipakai — kedua arch gak support FA2 (verified) |
+| 6 | LoRA + grad checkpointing smoke test | forward+backward beneran di GPU; deteksi bug `use_reentrant` |
+| 7 | Akses repo HF model | deteksi gated repo tanpa token (t5gemma) |
+| 8 | Dataset shards | lengkap/berurutan/schema/total rows (+`--deep` decode) |
 
-## Usage
+Tambahan: `--deep` buat decode semua shard, `--no-model` kalau offline, `--data-dir` folder parquet kustom.
+
+## Install (urutan WAJIB, terutama Windows)
 
 ```bash
-# optional: pretokenize once (byte-level, fast)
-python src/pretokenize.py --data-dir <parquet-folder> --out dataset/tok
+# 1. torch dulu — jangan dari PyPI kalau Windows (CPU-only!)
+python -m pip install torch --index-url https://download.pytorch.org/whl/cu124
 
-# cek environment (GPU, torch build, libs) — wajib sebelum training
+# 2. requirements (torch di-skip otomatis di Windows via marker)
+python -m pip install -r requirements.txt
+
+# 3. t5gemma gated: login akun HF yang udah granted + accept Gemma terms
+huggingface-cli login
+# akun: DranxX (sudah granted)
+
+# 4. WAJIB: cek environment
 python src/check_env.py
-
-# fine-tune
-python src/finetune.py --data-dir dataset/tok --model google/byt5-medium --out models/m1
-
-# RTX 3070 Ti (8GB): bf16 + smaller batch
-python src/finetune.py --data-dir dataset/tok --model google/byt5-medium --out models/m1 --bf16 --batch 4 --accum 4
-
-# inference
-python src/inference.py --adapter models/m1/final --text "dirty text here"
 ```
+
+Kalau `bitsandbytes` gagal di Windows: training masih bisa jalan pakai
+`--optim adamw_torch` (sedikit lebih boros VRAM, lihat tabel VRAM).
+
+## Dataset
+
+```bash
+# download dataset utuh (1.43M rows) — ambil folder parquet ke dataset/
+python - <<'PY'
+from huggingface_hub import snapshot_download
+snapshot_download("DranxX/corpus-cleaning-v1", repo_type="dataset",
+                  local_dir="dataset", allow_patterns=["*.parquet"])
+PY
+
+# cek shards (jumlah/urutan/schema/rows)
+python src/check_env.py
+```
+
+## Fine-tune
+
+```bash
+# CONFIG 1 — mt5-small (default, tercepat di 8 GB)
+python src/finetune.py --model-family mt5-small --data-dir dataset \
+  --out models/mt5s1 --bf16 --batch 16 --accum 1
+
+# CONFIG 2 — t5gemma-270m (butuh login HF)
+python src/finetune.py --model-family t5gemma-270m --data-dir dataset \
+  --out models/t5g1 --bf16 --batch 8 --accum 2
+
+# dataset dari HF langsung (on-the-fly tokenize)
+python src/finetune.py --model-family mt5-small \
+  --hf-dataset DranxX/corpus-cleaning-v1 --out models/mt5s1 --bf16
+```
+
+## Inference
+
+```bash
+python src/inference.py --model-family mt5-small --adapter models/mt5s1/final \
+  --lang id --text "No. 24; Diperbarui Maret 2011  \nKlik di sini..."
+```
+
+Format input training: `<{lang}> {raw}` — prefix bahasa wajib ada di inference juga.
 
 ## Directory layout
 
-Scripts create these automatically:
-
 ```
-dataset/
-└── tok/            ← pretokenized parquet (input_ids/labels)
-models/
-└── m1/
-    ├── checkpoint-*/  ← intermediate checkpoints
-    └── final/         ← best LoRA adapter + tokenizer files
+corpus-finetuned/
+├── AGENTS.md             ← PANDUAN AGENT (baca dulu sebelum ngapa-ngapain)
+├── Readme.md             ← file ini
+├── requirements.txt      ← pin yang diuji; urutan install di atas
+├── src/
+│   ├── config.py         ← 2 config arsitektur resmi (mt5-small, t5gemma-270m) + legacy
+│   ├── check_env.py      ← WAJIB JALAN DULU (gate exit 0)
+│   ├── finetune.py       ← LoRA training
+│   └── inference.py      ← load base+adapter, generate
+├── dataset/              ← parquet dari HF (di-gitignore)
+├── models/               ← checkpoint + adapter (di-gitignore)
+└── temp/runtime/         ← snapshot lokal model gated t5gemma (di-gitignore)
 ```
 
-| Flag | Default | Notes |
-|---|---|---|
-| `--model` | `google/byt5-medium` | `byt5-small` for quick tests |
-| `--max-input` / `--max-target` | 1024 / 512 | byte-level sequence budget |
-| `--batch` / `--accum` | 8 / 2 | 3070 Ti: use `--batch 4 --accum 4` |
-| `--bf16` | off | enable on Ampere+ (30xx/A100) |
-| `--attn` | `sdpa` | `sdpa` (default, tercepat) / `eager` — FA2 **gak berlaku** |
+## VRAM (RTX 3070 Ti 8 GB)
 
-## Model & sequence length
+| model | weights bf16 | LoRA+grads | aktivasi (ckpt, batch, seq 512/256) | total |
+|---|---|---|---|---|
+| mt5-small | 0.6 GB | ~0.1 GB | ~0.5 GB @ batch 16 | **~1.7 GB** ✅ |
+| t5gemma-270m | 0.75 GB | ~0.25 GB | ~0.8 GB @ batch 8 | **~2.5 GB** ✅ |
+| byt5-medium (legacy) | 1.2 GB | ~0.3 GB | seq byte-level 4× lebih panjang → OOM-prone | ⚠️ |
 
-ByT5 gak punya tokenizer — setiap byte = 1 token. Teks 500 karakter = **500 token**,
-vs ~125 token di SentencePiece. Makanya ByT5 berat soal sekuens:
+## Notes penting
 
-| | byt5-small (300M) | byt5-medium (582M) |
-|---|---|---|
-| Weights fp16 | ~0.6 GB | ~1.2 GB |
-| Attention di seq 1024 | ±3x biaya seq 512 | ±3x biaya seq 512 |
-
-Default `--max-input/--max-target` di **512/256 byte**: dari sampling 537K baris
-corpus, 99.1% input < 512 char dan 99.9% < 1024 — jadi budget 512/256 kehilangan
-<1% data sambil memangkas biaya attention ±4x dan aktivasi ±2x vs 1024/512.
-
-## VRAM (RTX 3070 Ti 8GB, byt5-medium, bf16 + LoRA + grad checkpointing)
-
-weights ~1.2 GB + LoRA/grads/optimizer ~0.4 GB + CUDA ctx ~0.5 GB → sisa ~5.9 GB
-untuk aktivasi. Dengan checkpointing, batch 8 @ 512/256 ≈ 1.6 GB — aman. Tanpa
-checkpointing, batch 4 @ 1024/512 butuh ~10 GB → OOM. Kombinasi gak masuk akal
-yang bikin OOM: `--max-input 1024` + lupa gradient checkpointing (default kita
-selalu on).
-
-Saran: mulai `--model google/byt5-small --batch 8` buat memvalidasi pipeline,
-baru medium `--batch 4 --accum 4` (aktif ~1.3 GB, aman). Kalau mau maksain
-1024/512 di 8 GB: batch 1–2 + checkpointing, tapi lemot — lebih baik jangan.
-
-## Notes
-
-- Verified identical encoding with HF `ByT5Tokenizer` — see `src/check_tokenizer.py`.
-- **FlashAttention-2 gak berlaku buat model ini** — bukan soal GPU (T4 sm_75 memang gak support, tapi itu moot): arch T5/ByT5 di transformers gak punya integrasi FA2 → `ValueError: T5ForConditionalGeneration does not support Flash Attention 2 yet`. SDPA = implementasi tercepat yang tersedia, jadi default. `check_env.py` cek + catat ini.
-- **Gradient checkpointing + LoRA**: `finetune.py` eksplisit set `gradient_checkpointing_kwargs={"use_reentrant": False}` — WAJIB di transformers < 4.49 (termasuk pin 4.46.3) karena default di sana `use_reentrant=True` yang bikin crash `element 0 of tensors does not require grad` (embedding dibekukan LoRA, tidak ada grad yang mengalir). transformers ≥ 4.49 sudah default `False`, kwargs ini jadi no-op yang aman. `check_env.py` membuktikan grad mengalir lewat smoke test backward di GPU.
-- `TokenParquetDataset` nyimpen byte flat int32 + offsets — 1.43M rows ~5 GB RAM (bukan list-of-lists puluhan GB). Taruh dataset di disk internal (NVMe), jangan HDD/USB eksternal — loading dari USB bikin I/O jadi bottleneck.
+- **FA2 gak berlaku** untuk kedua arch (`_supports_flash_attn=False` verified).
+  SDPA = default & tercepat yang tersedia. `check_env.py` yang menegaskan ini.
+- **`gradient_checkpointing_kwargs={"use_reentrant": False}`** WAJIB di
+  transformers < 4.49 — default di sana `use_reentrant=True` yang crash
+  `element 0 of tensors does not require grad` saat LoRA. Sudah dipasang di
+  `finetune.py`.
+- **Gated t5gemma**: snapshot lokal tersimpan di `temp/runtime/` — bisa pakai
+  `--base temp/runtime` buat offline.
+- Korpus panjang-skew: id median 234 char tapi en p95 17K char. Budget token
+  512/256 menangkap mayoritas; teks lebih panjang ke-truncate (chunking bisa
+  jadi pengembangan lanjutan).
+- Statistik lengkap dataset: lihat `experiments/merged/data.md`.
