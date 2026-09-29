@@ -183,6 +183,18 @@ def main():
     from transformers import AutoModelForSeq2SeqLM, AutoTokenizer, Trainer, TrainingArguments
     from peft import LoraConfig, TaskType, get_peft_model
 
+    def load_model_cls(repo, attn):
+        """Load model sesuai cfg.model_cls.
+
+        umt5 WAJIB class langsung: config.json resmi google/umt5-base gak punya
+        model_type -> AutoConfig raise "Unrecognized model in google/umt5-base".
+        """
+        if cfg.model_cls == "auto":
+            return AutoModelForSeq2SeqLM.from_pretrained(repo, attn_implementation=attn)
+        import transformers
+        cls = getattr(transformers, cfg.model_cls)
+        return cls.from_pretrained(repo, attn_implementation=attn)
+
     # ---- tokenizer + dataset
     tok = AutoTokenizer.from_pretrained(cfg.repo)
     # tokenize SEKALI via .map(num_proc) + cache arrow (memory-mapped);
@@ -194,7 +206,7 @@ def main():
     print(f"train: {n_train:,} | val: {n_val:,}")
 
     # ---- model + LoRA
-    model = AutoModelForSeq2SeqLM.from_pretrained(cfg.repo, attn_implementation=attn)
+    model = load_model_cls(cfg.repo, attn)
     model.config.use_cache = False
 
     lora = LoraConfig(

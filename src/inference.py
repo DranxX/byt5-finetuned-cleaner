@@ -24,7 +24,13 @@ def load_model(adapter_path, family_cfg, base_override=None, device=None):
     base = base_override or family_cfg.repo
     dtype = torch.bfloat16 if (device == "cuda" and torch.cuda.is_bf16_supported()) else torch.float32
 
-    model = AutoModelForSeq2SeqLM.from_pretrained(base, dtype=dtype, attn_implementation=family_cfg.attn)
+    # umt5: config.json gak punya model_type -> wajib class langsung (lihat config.py)
+    if family_cfg.model_cls == "auto":
+        model = AutoModelForSeq2SeqLM.from_pretrained(base, dtype=dtype, attn_implementation=family_cfg.attn)
+    else:
+        import transformers
+        cls = getattr(transformers, family_cfg.model_cls)
+        model = cls.from_pretrained(base, dtype=dtype, attn_implementation=family_cfg.attn)
     model = PeftModel.from_pretrained(model, adapter_path)
     model.eval().to(device)
 

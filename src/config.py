@@ -27,6 +27,11 @@ class ModelConfig:
     max_input: int              # default token budget encoder
     max_target: int             # default token budget decoder
     attn: str                   # attention implementation default
+    model_cls: str = "auto"     # nama class model utk import langsung.
+                                # "auto" = AutoModelForSeq2SeqLM (butuh model_type
+                                # di config.json). umt5 WAJIB "UMT5ForConditionalGeneration"
+                                # karena config.json resmi google gak punya model_type
+                                # (bug repo) -> AutoConfig raise "Unrecognized model".
     notes: str = ""
 
 
@@ -45,6 +50,7 @@ UMT5_BASE = ModelConfig(
                                 # 4096 = 98.7% row utuh (512 cuma 82.6% — en kepotong!)
     max_target=4096,            # p99.9 target id=174 tok, en p95 3.4K tok -> ~99% utuh
     attn="sdpa",                # FA2 gak didukung T5-family (verified)
+    model_cls="UMT5ForConditionalGeneration",   # WAJIB: config.json google gak punya model_type
     notes="580M params | vocab 256K (+300 sentinel) | EMA-pretrained (lebih stabil) | "
           "tokenizer paling padat utk id (5.37 B/tok terukur) | "
           "tie_word_embeddings=False | fp16 DILARANG (T5-family overflow) | "
@@ -67,6 +73,7 @@ T5GEMMA_270M = ModelConfig(
     max_input=4096,
     max_target=4096,            # sliding window 4096 di sisi attention — sepadan
     attn="sdpa",                # FA2 gak didukung arch ini (verified _supports_flash_attn=False)
+    model_cls="auto",           # T5Gemma2ForConditionalGeneration — config.json-nya benar
     notes="~370M params | vocab 262K | sliding_window 4096 + full-attn layers | "
           "GATED repo: wajib `huggingface-cli login` + accept Gemma terms | "
           "verified load+LoRA fwd/bwd+generate OK (transformers 4.55.x)",
