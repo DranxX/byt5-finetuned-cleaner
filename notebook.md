@@ -69,9 +69,11 @@ from huggingface_hub import snapshot_download
 import glob, pyarrow.parquet as pq
 
 path = snapshot_download("DranxX/corpus-cleaning-v1", repo_type="dataset",
-                         allow_patterns=["train-00000-of-00008.parquet"])  # 1 shard hemat
-files = sorted(glob.glob(f"{path}/train-*.parquet"))
+                         allow_patterns=["data/train-00000-of-00008.parquet"])  # 1 shard hemat
+# NOTE: file parquet ada di folder data/ di dalam HF repo — pattern wajib pakai prefix data/
+files = sorted(glob.glob(f"{path}/train-*.parquet")) or sorted(glob.glob(f"{path}/data/train-*.parquet"))
 print(f"{len(files)} shard")
+assert files, "parquet gak ketemu — cek allow_patterns harus 'data/train-...'"
 
 total, langs = 0, {}
 for fn in files:
@@ -89,6 +91,10 @@ assert total == 178_922, "shard gak utuh!"
 
 ```python
 # --- Cell 4: finetune mt5-small --------------------------------------------
+# DATASET_PATH di-set dari Cell 3 (path snapshot). Kalau jalankan cell ini
+# terpisah, set manual: DATASET_PATH = path dari Cell 3
+DATASET_PATH = path   # dari Cell 3; folder snapshot yang isinya data/train-00000-...
+
 import sys, os
 sys.path.insert(0, "/content/corpus-finetuned/src")  # kalau clone repo; ATAU inline di bawah
 
@@ -121,8 +127,10 @@ lora = LoraConfig(task_type=TaskType.SEQ_2_SEQ_LM, r=32, lora_alpha=64,
 model = get_peft_model(model, lora)
 model.print_trainable_parameters()   # expect ~0.4% trainable
 
-ds = load_dataset("DranxX/corpus-cleaning-v1", split="train")
+ds = load_dataset("parquet", data_files={"train": f"{DATASET_PATH}/data/train-*.parquet"},
+                  split="train")
 ds = ds.train_test_split(test_size=0.02, seed=42)   # pilot: val 2% aja
+print(ds)
 
 def preprocess(ex):
     src = f"<{ex['lang']}> {ex['raw']}"
