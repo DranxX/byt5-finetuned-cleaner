@@ -14,3 +14,4 @@ data_tok/
 *.parquet
 *.jsonl
 temp/
+notebook.md
