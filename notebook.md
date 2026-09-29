@@ -69,7 +69,7 @@ from huggingface_hub import snapshot_download
 import glob, pyarrow.parquet as pq
 
 path = snapshot_download("DranxX/corpus-cleaning-v1", repo_type="dataset",
-                         allow_patterns=["*.parquet"])
+                         allow_patterns=["train-00000-of-00008.parquet"])  # 1 shard hemat
 files = sorted(glob.glob(f"{path}/train-*.parquet"))
 print(f"{len(files)} shard")
 
@@ -77,12 +77,13 @@ total, langs = 0, {}
 for fn in files:
     md = pq.ParquetFile(fn).metadata
     total += md.num_rows
-print(f"total rows: {total:,}  (harus 1,431,369)")
-assert total == 1_431_369, "dataset gak utuh!"
+print(f"total rows: {total:,}  (harus 178,922 = shard 0 utuh)")
+assert total == 178_922, "shard gak utuh!"
 ```
 
-> 8 shard ≈ 1.9 GB — di Colab muat, tapi kalau mau cepat, pilot cukup 2 shard
-> dulu (ganti `allow_patterns=["train-0000[0-1]-of-00008.parquet"]`).
+> 1 shard (shard 0) = 178,922 rows ≈ 55 MB, isinya id semua — **cukup buat pilot**.
+> Kolom bahasa lain (en/zh) ada di shard 5–7; buat ngetes pipeline, satu shard id
+> sudah mewakili. Full 8 shard nanti di training asli.
 
 ## Cell 4 — Training (mT5-small + LoRA)
 
@@ -107,8 +108,8 @@ MODEL = "google/mt5-small"
 MAX_IN, MAX_TGT = 512, 256          # token budget (id median 92 tok, p99 225)
 BATCH, ACCUM = 16, 2                # T4 16GB: batch 16-32 aman dgn ckpting
 LR = 2e-4
-EPOCHS = 0.2                        # PILOT: ~286K samples (20% data) sekali lewat
-                                    # full 1 epoch = 1.43M steps... jangan dulu
+EPOCHS = 1.0                       # PILOT 1 shard: 178K rows, 1 epoch penuh = ~11K steps
+                                   # kualitas masih kasar, tapi lebih informatif dr 0.2
 
 tok = AutoTokenizer.from_pretrained(MODEL)
 model = AutoModelForSeq2SeqLM.from_pretrained(MODEL, attn_implementation="sdpa")
@@ -183,7 +184,7 @@ print("adapter saved -> /content/models/mt5s_pilot/final")
 ```
 
 Perkiraan: T4 + batch 16×accum 2, fp16, seq 512/256 → **~2.5–4 it/s**.
-20% data (286K rows) ≈ 9K steps ≈ **1.5–2 jam**. VRAM dipakai ~6–8 GB (T4 16 GB aman).
+1 shard (178K rows, 95% train) ≈ 10.6K steps ≈ **1.5–2.5 jam**. VRAM ~6–8 GB (T4 16 GB aman).
 
 ## Cell 5 — Inference test
 
