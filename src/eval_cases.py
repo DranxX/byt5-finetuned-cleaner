@@ -52,10 +52,11 @@ def main():
     ap.add_argument("--adapter", required=True)
     ap.add_argument("--model-family", default="mt5-small")
     ap.add_argument("--base", default=None, help="override repo base (mis. snapshot offline)")
-    ap.add_argument("--beams", type=int, default=4)
+    ap.add_argument("--beams", type=int, default=1,
+                    help="greedy cukup utk smoke test; 4 kalau mau quality (4x lambat)")
     ap.add_argument("--min-new", type=int, default=40,
                     help="anti-EOS-premature (length prior data synthetic)")
-    ap.add_argument("--max-new", type=int, default=2048)
+    ap.add_argument("--max-new", type=int, default=4096)
     args = ap.parse_args()
 
     import torch

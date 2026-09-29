@@ -119,9 +119,10 @@ python src/finetune.py --model-family mt5-small --data-dir dataset \
   --out models/mt5s-full --bf16 --batch 16 --accum 1
 #   default: lr 3e-5 | r16/alpha32 | warmup 500 | clip 1.0 | adamw_torch |
 #            fp16 OFF | eval 1000 / save 2000 | val 1% capped 4000 rows |
-#            max-target 2048 (p99 id 149 tok, p95 en 3407 tok -> 2048 = 96% utuh)
-#   durasi est: 85K step/epoch, tapi long-tail seq 2048 bikin rata2 turun ->
-#   ~10-14 jam/epoch @ bf16. batch 16; kalau OOM di long-tail: --batch 8 --accum 2.
+#            max_input & max_target 4096 (99% rows utuh; batch 8 x accum 2 =
+#            efektif 16 — batch 16 @ seq 4096 bakal OOM di 8GB, jangan)
+#   durasi est: ~10-15 jam/epoch @ bf16 (long-tail seq 4096 lambat; group_by_length
+#   bikin mayoritas batch pendek jalan cepet).
 #   Kalau loss nan di 1000 step pertama: jangan panik, baca output (nan
 #   ditampilkan jujur) -> turunin --lora-r 8 --lora-alpha 16 & --lr 1e-5.
 #   Lanjut epoch ekstra: python src/finetune.py ... (resume otomatis dari

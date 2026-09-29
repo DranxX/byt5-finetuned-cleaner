@@ -138,11 +138,13 @@ def check_torch_and_gpu():
             vram = f"{total:.1f} GB"
         ok(f"GPU {i}: {props.name} | sm_{cap[0]}{cap[1]} | VRAM {vram}")
         if not bf16:
-            warn(f"GPU {i}: gak support bf16 — pakai fp16")
+            warn(f"GPU {i}: gak support bf16 — JANGAN pakai fp16 utk mt5 (overflow); "
+                 f"biarkan fp32 & pakai --batch 4 --accum 4")
         if total < 8:
             warn(f"GPU {i}: VRAM < 8 GB — pakai batch kecil")
-    suggest = ("--model-family mt5-small --batch 16 --accum 1"
-               if total >= 8 else "--model-family mt5-small --batch 8 --accum 2")
+    bf16_flag = " --bf16" if (gpu_caps and min(gpu_caps) >= (8, 0)) else ""
+    suggest = (f"--model-family mt5-small --batch 8 --accum 2{bf16_flag}"
+               if total >= 8 else f"--model-family mt5-small --batch 4 --accum 4{bf16_flag}")
     cuda_ok = True
 
 

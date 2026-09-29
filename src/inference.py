@@ -33,7 +33,7 @@ def load_model(adapter_path, family_cfg, base_override=None, device=None):
 
 
 @torch.no_grad()
-def clean(model, tok, text, lang, device, max_new_tokens=2048, num_beams=1,
+def clean(model, tok, text, lang, device, max_new_tokens=4096, num_beams=1,
           min_new_tokens=0, repetition_penalty=1.2, no_repeat_ngram=4):
     """Prefix <lang> wajib sama dgn format training.
 
@@ -43,7 +43,8 @@ def clean(model, tok, text, lang, device, max_new_tokens=2048, num_beams=1,
     - sentinel <extra_id_N> (prior span-corruption mT5) di-strip otomatis
     """
     src = f"<{lang}> {text}"
-    max_len = getattr(model.config, "encoder_max_length", None) or 512
+    # encoder budget ikut config (4096) — jangan hardcode lama 512
+    max_len = getattr(model.config, "encoder_max_length", None) or 4096
     ids = tok(src, return_tensors="pt", truncation=True,
               max_length=max_len).to(device)
     out = model.generate(**ids, max_new_tokens=max_new_tokens,
@@ -63,7 +64,7 @@ def main():
     ap.add_argument("--base", default=None, help="override base model repo/local path")
     ap.add_argument("--text", required=True)
     ap.add_argument("--lang", default="id", choices=["id", "en", "zh"])
-    ap.add_argument("--max-new", type=int, default=2048)
+    ap.add_argument("--max-new", type=int, default=4096)
     ap.add_argument("--beams", type=int, default=4,
                     help=">1 bantu cegah EOS premature (pilot: beams=4 fix kepotong)")
     ap.add_argument("--min-new", type=int, default=40,

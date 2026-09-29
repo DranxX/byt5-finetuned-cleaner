@@ -72,7 +72,7 @@ python src/check_env.py
 ```bash
 # CONFIG 1 — mt5-small (default, tercepat di 8 GB)
 python src/finetune.py --model-family mt5-small --data-dir dataset \
-  --out models/mt5s1 --bf16 --batch 16 --accum 1
+  --out models/mt5s1 --bf16 --batch 8 --accum 2
 
 # CONFIG 2 — t5gemma-270m (butuh login HF)
 python src/finetune.py --model-family t5gemma-270m --data-dir dataset \
@@ -109,13 +109,17 @@ corpus-finetuned/
 └── temp/runtime/         ← snapshot lokal model gated t5gemma (di-gitignore)
 ```
 
-## VRAM (RTX 3070 Ti 8 GB)
+## VRAM (RTX 3070 Ti 8 GB, budget seq 4096/4096)
 
-| model | weights bf16 | LoRA+grads | aktivasi (ckpt, batch, seq 512/256) | total |
+| model | weights bf16 | LoRA+grads | aktivasi (ckpt, batch 8, seq 4096 long-tail) | total |
 |---|---|---|---|---|
-| mt5-small | 0.6 GB | ~0.1 GB | ~0.5 GB @ batch 16 | **~1.7 GB** ✅ |
-| t5gemma-270m | 0.75 GB | ~0.25 GB | ~0.8 GB @ batch 8 | **~2.5 GB** ✅ |
-| byt5-medium (legacy) | 1.2 GB | ~0.3 GB | seq byte-level 4× lebih panjang → OOM-prone | ⚠️ |
+| mt5-small | 0.6 GB | ~0.1 GB | ~4.5 GB worst-case batch | **~5.2 GB** ✅ |
+| t5gemma-270m | 0.75 GB | ~0.25 GB | ~4.8 GB worst-case batch | **~5.8 GB** ✅ |
+| byt5-medium (legacy) | 1.2 GB | ~0.3 GB | byte-level 4× panjang → OOM | ⚠️ |
+
+group_by_length bikin mayoritas batch jalan di seq pendek (median target id
+~50-90 token) → throughput harian jauh di atas worst-case. Batch 16 HANYA
+kalau budget diturunin (mis. `--max-input 1024`).
 
 ## Notes penting
 
@@ -127,7 +131,8 @@ corpus-finetuned/
   `finetune.py`.
 - **Gated t5gemma**: snapshot lokal tersimpan di `temp/runtime/` — bisa pakai
   `--base temp/runtime` buat offline.
-- Korpus panjang-skew: id median 234 char tapi en p95 17K char. Budget token
-  512/256 menangkap mayoritas; teks lebih panjang ke-truncate (chunking bisa
-  jadi pengembangan lanjutan).
+- Korpus panjang-skew: budget 4096/4096 menangkap ~99% rows utuh (input:
+  id p99 185 tok, en median 1056 tok; target: id p99.9 174 tok, en p95 3.4K
+  tok). Sisanya (en ekstrem >4K tok) ke-truncate — chunking per-paragraf
+  jadi pengembangan lanjutan kalau dibutuhin.
 - Statistik lengkap dataset: lihat `experiments/merged/data.md`.
