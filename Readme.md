@@ -83,8 +83,8 @@ python src/finetune.py --model-family t5gemma-270m --data-dir dataset \
   --out models/t5g-full --bf16
 
 # dataset dari HF langsung (on-the-fly tokenize)
-python src/finetune.py --model-family mt5-small \
-  --hf-dataset DranxX/corpus-cleaning-v1 --out models/mt5s1 --bf16
+python src/finetune.py \
+  --hf-dataset DranxX/corpus-cleaning-v1 --out models/umt5-full --bf16
 ```
 
 ## Inference
