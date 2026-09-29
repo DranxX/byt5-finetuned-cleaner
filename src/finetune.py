@@ -321,12 +321,6 @@ def main():
     model.save_pretrained(save_dir)
     if tok is not None:
         tok.save_pretrained(save_dir)
-    else:
-        import shutil
-        for f in ["tokenizer.json", "tokenizer_config.json", "added_tokens.json"]:
-            src = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), f)
-            if os.path.exists(src):
-                shutil.copy(src, save_dir)
     print(f"saved adapter -> {save_dir}")
 
 
