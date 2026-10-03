@@ -1,19 +1,7 @@
-"""
-finetune.py — LoRA fine-tune untuk text cleaning (raw -> clean).
-
-Pakai config arsitektur dari config.py:
-  --model-family umt5-base      # google/umt5-base (DEFAULT, pipeline utama, 580M)
-  --model-family t5gemma-270m   # google/t5gemma-2-270m-270m (opsional, lain waktu)
-
-Dataset:
-  --data-dir  folder parquet dgn kolom lang/raw/clean ATAU input_ids/labels
-              (tokenized on-the-fly, byte+3 hanya utk ByT5 legacy)
-  --hf-dataset DranxX/corpus-cleaning-v1 (download dari HF)
-
-WAJIB: python src/check_env.py harus exit 0 dulu.
-"""
 import argparse
 import hashlib
+import json
+import math
 import os
 import sys
 
@@ -21,22 +9,17 @@ import numpy as np
 import torch
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from config import get_config  # noqa: E402
+from config import get_config
+
+PREPROCESS_VERSION = 3
+SUPPORTED_LANGUAGES = {"id", "en", "zh"}
+LABEL_PAD_ID = -100
+PADDING_MULTIPLE = 8
 
 class ArrowRawDataset:
-    """1.43M rows via HF datasets + .map(num_proc) — tokenize SEKALI, cache arrow.
 
-    Kenapa bukan tokenize on-the-fly per __getitem__: tiap epoch re-tokenize
-    1.43M rows = buang ~40 menit CPU per epoch. Arrow cache memory-mapped ->
-    RAM stabil. Kolom "length" utk group_by_length tanpa iterasi penuh.
-
-    File parquet di-scan rekursif (termasuk data/ dari snapshot HF) + realpath
-    (dataset 3.2.0 gak bisa baca symlink cache HF via wildcard).
-    """
-
-    def __init__(self, ds, pad_id):
+    def __init__(self, ds):
         self.ds = ds
-        self.pad_id = pad_id
 
     @classmethod
     def load(cls, data_dir, hf_dataset, tok, max_input, max_target,
@@ -53,28 +36,61 @@ class ArrowRawDataset:
                 raise SystemExit(f"tidak ada parquet di {data_dir} (scan rekursif)")
             ds = load_dataset("parquet", data_files={"train": files},
                               split="train", cache_dir=cache_dir)
-            src_tag = hashlib.md5("|".join(files).encode()).hexdigest()[:8]
         else:
             ds = load_dataset(hf_dataset, split="train", cache_dir=cache_dir)
-            src_tag = hf_dataset.replace("/", "_")[:30]
+
+        if not {"lang", "raw", "clean"}.issubset(ds.column_names):
+            raise SystemExit("dataset harus memiliki kolom lang/raw/clean; gunakan parquet mentah")
+        cache_identity = {
+            "dataset": ds._fingerprint,
+            "tokenizer": tok.name_or_path,
+            "vocabulary": tok.get_vocab(),
+            "special_tokens": tok.special_tokens_map,
+            "max_input": max_input,
+            "max_target": max_target,
+            "preprocess": PREPROCESS_VERSION,
+        }
+        src_tag = hashlib.sha256(json.dumps(cache_identity, sort_keys=True).encode()).hexdigest()[:16]
 
         def preprocess(ex):
-            src = f"<{ex['lang']}> {ex['raw']}"
-            enc = tok(src, truncation=True, max_length=max_input)
-            lab = tok(ex["clean"], truncation=True, max_length=max_target)
+            if any(not isinstance(lang, str) or lang not in SUPPORTED_LANGUAGES for lang in ex["lang"]):
+                raise ValueError("dataset mengandung bahasa yang tidak didukung")
+            if any(not isinstance(text, str) for key in ("raw", "clean") for text in ex[key]):
+                raise ValueError("raw/clean harus string dan tidak boleh null")
+            src = [f"<{lang}> {raw}" for lang, raw in zip(ex["lang"], ex["raw"])]
+            enc = tok(src, truncation=False, verbose=False)
+            lab = tok(ex["clean"], truncation=False, verbose=False)
+            is_input_truncated = [len(ids) > max_input for ids in enc["input_ids"]]
+            is_target_truncated = [len(ids) > max_target for ids in lab["input_ids"]]
+            for encoded, texts, budget, flags in (
+                    (enc, src, max_input, is_input_truncated),
+                    (lab, ex["clean"], max_target, is_target_truncated)):
+                indices = [index for index, flag in enumerate(flags) if flag]
+                if not indices:
+                    continue
+                clipped = tok([texts[index] for index in indices], truncation=True,
+                              max_length=budget, verbose=False)["input_ids"]
+                for index, ids in zip(indices, clipped):
+                    encoded["input_ids"][index] = ids
             return {"input_ids": enc["input_ids"], "labels": lab["input_ids"],
-                    "length": len(enc["input_ids"])}
+                    "length": [len(ids) for ids in enc["input_ids"]],
+                    "is_input_truncated": is_input_truncated,
+                    "is_target_truncated": is_target_truncated}
 
         tag = f"tok_{src_tag}_in{max_input}_out{max_target}"
-        ds = ds.map(preprocess, num_proc=num_proc,
-                    remove_columns=[c for c in ds.column_names if c != "length"],
+        ds = ds.map(preprocess, batched=True, num_proc=num_proc if num_proc > 1 else None,
+                    remove_columns=ds.column_names,
                     desc="tokenize", cache_file_name=os.path.join(cache_dir, f"{tag}.arrow"))
+
+        print(f"[budget] input terpotong={sum(ds['is_input_truncated']):,}; "
+              f"target terpotong={sum(ds['is_target_truncated']):,}; rows={len(ds):,}")
+        ds = ds.remove_columns(["is_input_truncated", "is_target_truncated"])
 
         split = ds.train_test_split(test_size=val_frac, seed=seed)
         val = split["test"]
         if len(val) > val_max:
             val = val.shuffle(seed=seed).select(range(val_max))
-        return cls(split["train"], tok.pad_token_id or 0), cls(val, tok.pad_token_id or 0), len(split["train"]), len(val)
+        return cls(split["train"]), cls(val), len(split["train"]), len(val)
 
     def __len__(self):
         return len(self.ds)
@@ -84,21 +100,25 @@ class ArrowRawDataset:
         return {
             "input_ids": np.asarray(ex["input_ids"], dtype=np.int64),
             "labels": np.asarray(ex["labels"], dtype=np.int64),
+            "length": ex["length"],
         }
 
 class PadCollator:
-    """Dynamic padding; label pad = -100 (ignored di loss)."""
 
-    def __init__(self, pad_id=0, label_pad=-100):
+    def __init__(self, pad_id=0, label_pad=LABEL_PAD_ID):
         self.pad_id = pad_id
         self.label_pad = label_pad
 
     def __call__(self, features):
-        # kolom "length" (utk group_by_length) dibuang di sini kalau lolos
-        # dari remove_unused_columns — gak boleh nyasar ke model.forward
+
+
         features = [{k: v for k, v in f.items() if k != "length"} for f in features]
+        if not features or any(len(f["input_ids"]) == 0 or len(f["labels"]) == 0 for f in features):
+            raise ValueError("batch tidak boleh memiliki sekuens kosong")
         max_in = max(len(f["input_ids"]) for f in features)
         max_lab = max(len(f["labels"]) for f in features)
+        max_in = math.ceil(max_in / PADDING_MULTIPLE) * PADDING_MULTIPLE
+        max_lab = math.ceil(max_lab / PADDING_MULTIPLE) * PADDING_MULTIPLE
         batch_in, batch_lab, batch_attn = [], [], []
         for f in features:
             in_ids, lab_ids = list(f["input_ids"]), list(f["labels"])
@@ -117,7 +137,9 @@ def compute_metrics(pred):
     labels, preds = pred.label_ids, pred.predictions
     if isinstance(preds, tuple):
         preds = preds[0]
-    mask = labels != -100
+    mask = labels != LABEL_PAD_ID
+    if not mask.any():
+        return {"token_accuracy": 0.0}
     return {"token_accuracy": float((preds[mask] == labels[mask]).mean())}
 
 
@@ -138,15 +160,12 @@ def main():
     ap.add_argument("--max-target", type=int, default=None)
     ap.add_argument("--lora-r", type=int, default=32)
     ap.add_argument("--lora-alpha", type=int, default=64)
-    ap.add_argument("--epochs", type=float, default=2.0)   # pilot terbukti: 1 epoch blm konvergen
+    ap.add_argument("--epochs", type=float, default=2.0)
     ap.add_argument("--batch", type=int, default=2,
-                    help="WAJIB 2 utk budget 4096: attention umt5/mt5 = manual scores "
-                         "O(L^2), batch 4 butuh 3GB cuma utk softmax output (OOM terbukti). "
-                         "batch kecil + accum tinggi = eff batch tetap 16")
+                    help="micro-batch per GPU; ukur VRAM pada batch panjang sebelum menaikkan")
     ap.add_argument("--accum", type=int, default=8)
     ap.add_argument("--lr", type=float, default=3e-5,
-                    help="WAJIB KECIL utk mT5+LoRA: 2e-4 bikin loss diverge "
-                         "(terbukti di T4: grad_norm ribuan -> nan). 1e-4 kalau udah stabil.")
+                    help="learning rate LoRA; evaluasi loss dan gradient sebelum menaikkan")
     ap.add_argument("--warmup", type=int, default=500)
     ap.add_argument("--eval-steps", type=int, default=200)
     ap.add_argument("--save-steps", type=int, default=400,
@@ -158,15 +177,40 @@ def main():
     ap.add_argument("--num-proc", type=int, default=4,
                     help="proses paralel tokenize (.map); 1 kalau Windows rewel")
     ap.add_argument("--seed", type=int, default=42)
-    ap.add_argument("--bf16", action="store_true", help="GPU Ampere+ (30xx/A100) — WAJIB di 3070 Ti")
+    ap.add_argument("--bf16", action="store_true", help="paksa BF16 native pada GPU Ampere+")
+    ap.add_argument("--precision", default="auto", choices=["auto", "fp32", "bf16"])
     ap.add_argument("--attn", default=None, choices=[None, "sdpa", "eager"])
     ap.add_argument("--optim", default="adamw_torch",
                     help="adamw_torch (default, stabil — hasil pilot T4). "
                          "paged_adamw_8bit cuma kalau VRAM bener-bener sempit")
     args = ap.parse_args()
 
-    # guard: group_by_length/length_column_name gak ada di transformers 5.x —
-    # "unexpected keyword group_by_length" = env lu bawa transformers salah versi
+    positive_ints = (args.batch, args.accum, args.lora_r, args.lora_alpha,
+                     args.eval_steps, args.save_steps, args.val_max, args.num_proc)
+    if any(value <= 0 for value in positive_ints) or args.warmup < 0:
+        raise SystemExit("batch, accum, LoRA, interval, val-max, num-proc harus positif; warmup >= 0")
+    if any(not math.isfinite(value) or value <= 0 for value in
+           (args.epochs, args.lr, args.max_grad_norm)):
+        raise SystemExit("epochs, lr, max-grad-norm harus finite dan positif")
+    if not math.isfinite(args.val_frac) or not 0 < args.val_frac < 1:
+        raise SystemExit("val-frac harus di antara 0 dan 1")
+    if any(value is not None and value <= 0 for value in (args.max_input, args.max_target)):
+        raise SystemExit("budget sekuens harus positif")
+    if bool(args.data_dir) == bool(args.hf_dataset):
+        raise SystemExit("isi tepat satu dari --data-dir atau --hf-dataset")
+    if args.bf16 and args.precision == "fp32":
+        raise SystemExit("--bf16 tidak boleh dipakai bersama --precision fp32")
+    if not torch.cuda.is_available():
+        raise SystemExit("CUDA tidak tersedia; perbaiki environment lalu jalankan check_env.py")
+    is_native_bf16 = all(torch.cuda.get_device_capability(index) >= (8, 0)
+                         for index in range(torch.cuda.device_count()))
+    should_use_bf16 = args.bf16 or args.precision == "bf16" or (
+        args.precision == "auto" and is_native_bf16)
+    if should_use_bf16 and not is_native_bf16:
+        raise SystemExit("BF16 native memerlukan Ampere+; gunakan --precision fp32 di T4")
+    model_dtype = torch.bfloat16 if should_use_bf16 else torch.float32
+
+
     import transformers
     major = int(transformers.__version__.split(".")[0])
     if major != 4:
@@ -176,50 +220,54 @@ def main():
             f"  python -m pip install transformers==4.55.4\n"
             f"lalu jalankan python src/check_env.py (harus exit 0) sebelum training.")
 
-    # guard: load_best_model_at_end mensyaratkan save_steps kelipatan eval_steps
+
     if args.save_steps % args.eval_steps != 0:
         raise SystemExit(
             f"--save-steps ({args.save_steps}) harus kelipatan bulat dari "
             f"--eval-steps ({args.eval_steps}) — load_best_model_at_end nolak kombinasi ini")
 
-    if not args.data_dir and not args.hf_dataset:
-        raise SystemExit("isi --data-dir ATAU --hf-dataset")
-
     cfg = get_config(args.model_family)
+    if cfg.model_cls != "auto" and not hasattr(transformers, cfg.model_cls):
+        raise SystemExit(
+            f"{cfg.key} memerlukan {cfg.model_cls}, yang tidak tersedia di transformers "
+            f"{transformers.__version__}. Pin dependency belum mendukung model ini.")
     max_input = args.max_input or cfg.max_input
     max_target = args.max_target or cfg.max_target
     attn = args.attn or cfg.attn
+    if cfg.key == "umt5-base" and attn != "eager":
+        raise SystemExit("UMT5 pada transformers 4.55.4 hanya mendukung --attn eager")
+    print(f"[precision] {model_dtype}; fp16=False")
     print(f"[config] family={cfg.key} repo={cfg.repo}")
     print(f"[config] max_input={max_input} max_target={max_target} attn={attn} lora_targets={cfg.lora_targets}")
 
-    from transformers import AutoModelForSeq2SeqLM, AutoTokenizer, Trainer, TrainingArguments
+    from transformers import AutoModelForSeq2SeqLM, AutoTokenizer, Trainer, TrainingArguments, set_seed
     from peft import LoraConfig, TaskType, get_peft_model
 
     def load_model_cls(repo, attn):
-        """Load model sesuai cfg.model_cls.
-
-        umt5 WAJIB class langsung: config.json resmi google/umt5-base gak punya
-        model_type -> AutoConfig raise "Unrecognized model in google/umt5-base".
-        """
         if cfg.model_cls == "auto":
-            return AutoModelForSeq2SeqLM.from_pretrained(repo, attn_implementation=attn)
+            return AutoModelForSeq2SeqLM.from_pretrained(
+                repo, torch_dtype=model_dtype, attn_implementation=attn)
         import transformers
         cls = getattr(transformers, cfg.model_cls)
-        return cls.from_pretrained(repo, attn_implementation=attn)
+        return cls.from_pretrained(repo, torch_dtype=model_dtype, attn_implementation=attn)
 
-    # ---- tokenizer + dataset
+
+    set_seed(args.seed)
     tok = AutoTokenizer.from_pretrained(cfg.repo)
-    # tokenize SEKALI via .map(num_proc) + cache arrow (memory-mapped);
-    # group_by_length baca kolom "length" tanpa iterasi penuh
+    if tok.pad_token_id is None:
+        raise SystemExit("tokenizer harus memiliki pad token")
+
+
     train_ds, val_ds, n_train, n_val = ArrowRawDataset.load(
         args.data_dir, args.hf_dataset, tok, max_input, max_target,
         args.val_frac, args.seed, args.val_max, args.num_proc)
 
     print(f"train: {n_train:,} | val: {n_val:,}")
 
-    # ---- model + LoRA
+
     model = load_model_cls(cfg.repo, attn)
     model.config.use_cache = False
+    model.config.encoder_max_length = max_input
 
     lora = LoraConfig(
         task_type=TaskType.SEQ_2_SEQ_LM,
@@ -231,29 +279,29 @@ def main():
     model = get_peft_model(model, lora)
     model.print_trainable_parameters()
 
-    # ---- training
+
     targs = TrainingArguments(
         output_dir=args.out,
         num_train_epochs=args.epochs,
         per_device_train_batch_size=args.batch,
         per_device_eval_batch_size=args.batch,
         gradient_accumulation_steps=args.accum,
-        # WAJIB utk transformers < 4.49 (default di sana use_reentrant=True
-        # yang crash "element 0 ... does not require grad" dgn LoRA frozen embed)
+
+
         gradient_checkpointing_kwargs={"use_reentrant": False},
         gradient_checkpointing=True,
-        # PENTING: fp16=False utk mT5 — fp16 bikin forward overflow (loss nan).
-        # Di GPU tanpa bf16 (T4): biarkan fp32 penuh (bf16 off => fp16 off dgn flag ini)
-        fp16=False,   # dilarang; T5-family (umt5/mt5) + fp16 = NaN (verified)
-        bf16=args.bf16,
+
+
+        fp16=False,
+        bf16=should_use_bf16,
         optim=args.optim,
         learning_rate=args.lr,
-        max_grad_norm=args.max_grad_norm,   # clip — mT5 grad norm gede
+        max_grad_norm=args.max_grad_norm,
         warmup_steps=args.warmup,
         lr_scheduler_type="cosine",
         logging_steps=50,
-        logging_nan_inf_filter=False,   # jujur: nan tampil sbg nan (pilot T4:
-                                        # filter ini nyamarin divergence jadi 0.000000)
+        logging_nan_inf_filter=False,
+
         eval_strategy="steps",
         eval_steps=args.eval_steps,
         save_strategy="steps",
@@ -264,27 +312,37 @@ def main():
         greater_is_better=False,
         group_by_length=True,
         length_column_name="length",
+        remove_unused_columns=False,
         dataloader_num_workers=2,
+        dataloader_pin_memory=True,
         report_to="none",
         seed=args.seed,
     )
+    if int(os.environ.get("WORLD_SIZE", "1")) == 1:
+        targs._n_gpu = 1
 
     collator = PadCollator(pad_id=tok.pad_token_id)
     trainer = Trainer(
         model=model,
         args=targs,
-        train_dataset=train_ds,
-        eval_dataset=val_ds,
+        train_dataset=train_ds.ds,
+        eval_dataset=val_ds.ds,
         data_collator=collator,
         compute_metrics=compute_metrics,
         preprocess_logits_for_metrics=preprocess_logits_for_metrics,
+        processing_class=tok,
     )
-    trainer.train()
+    from transformers.trainer_utils import get_last_checkpoint
+    last_checkpoint = get_last_checkpoint(args.out) if os.path.isdir(args.out) else None
+    trainer.train(resume_from_checkpoint=last_checkpoint)
 
-    # ---- save adapter + tokenizer
+
     save_dir = os.path.join(args.out, "final")
     model.save_pretrained(save_dir)
     tok.save_pretrained(save_dir)
+    with open(os.path.join(save_dir, "cleaning_config.json"), "w", encoding="utf-8") as handle:
+        json.dump({"model_family": cfg.key, "base_model": cfg.repo,
+                   "max_input": max_input, "max_target": max_target}, handle, indent=2)
     print(f"saved adapter -> {save_dir}")
 
 

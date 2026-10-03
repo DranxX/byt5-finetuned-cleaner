@@ -1,24 +1,3 @@
-"""
-Environment doctor — WAJIB JALAN SEBELUM APA PUN.
-
-Cek:
-  1. Python + OS
-  2. PyTorch: build CPU vs CUDA, smoke test kernel GPU
-  3. GPU: nama, VRAM, bf16, driver
-  4. Library: versi terinstall vs pin requirements.txt
-  5. flash-attn (harus gak dipakai — semua arch di config gak support FA2)
-  6. LoRA + gradient checkpointing smoke test (forward+backward di GPU)
-  7. Dataset shards: lengkap, schema benar, total rows, (opsional --deep decode)
-  8. Akses model HF: bisa resolve config repo target (deteksi gated tanpa token)
-
-Usage:
-  python src/check_env.py                    # env + model + dataset (kalau ada)
-  python src/check_env.py --data-dir <dir>   # folder parquet tertentu
-  python src/check_env.py --deep             # decode semua shard (lambat)
-  python src/check_env.py --no-model         # skip cek akses HF (offline mode)
-
-Exit code: 0 = siap training, 1 = ada masalah. Gunakan sebagai gate agent/CI.
-"""
 import argparse
 import glob
 import os
@@ -30,12 +9,14 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from config import CONFIGS  # noqa: E402
+from config import CONFIGS
 
 LIBS = ["transformers", "peft", "accelerate", "datasets", "sentencepiece",
         "tokenizers", "pyarrow", "numpy", "bitsandbytes"]
 
-EXPECTED_TOTAL = 1_431_369  # corpus-cleaning-v1 utuh
+EXPECTED_TOTAL = 1_431_369
+DEEP_BATCH_SIZE = 4096
+SUPPORTED_LANGUAGES = {"id", "en", "zh"}
 SHARD_RE = re.compile(r"^train-(\d+)-of-(\d+)\.parquet$")
 
 problems = []
@@ -75,7 +56,6 @@ def read_pins():
     return pins
 
 
-# ---------------------------------------------------------------
 def check_python():
     head("Python")
     v = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
@@ -139,12 +119,11 @@ def check_torch_and_gpu():
         ok(f"GPU {i}: {props.name} | sm_{cap[0]}{cap[1]} | VRAM {vram}")
         if not bf16:
             warn(f"GPU {i}: gak support bf16 — JANGAN pakai fp16 utk umt5/T5-family (overflow); "
-                 f"biarkan fp32 & pakai --batch 4 --accum 4")
+                 f"mulai dari --precision fp32 --batch 1 --accum 16")
         if total < 8:
             warn(f"GPU {i}: VRAM < 8 GB — pakai batch kecil")
     bf16_flag = " --bf16" if (gpu_caps and min(gpu_caps) >= (8, 0)) else ""
-    suggest = (f"--model-family umt5-base --batch 8 --accum 2{bf16_flag}"
-               if total >= 8 else f"--model-family umt5-base --batch 4 --accum 4{bf16_flag}")
+    suggest = f"--model-family umt5-base --batch 1 --accum 16{bf16_flag} --data-dir dataset --out models/umt5-full"
     cuda_ok = True
 
 
@@ -160,8 +139,8 @@ def check_libs():
             continue
         note = f" (pin {pin})" if pin else ""
         if pin and v != pin:
-            warn(f"{name} {v}{note} — versi beda dgn pin")
-            warnings.append(f"{name} {v} != pin {pin}")
+            bad(f"{name} {v}{note} — versi beda dgn environment yang diuji")
+            problems.append(f"{name} {v} != pin {pin}")
         else:
             ok(f"{name} {v}".rstrip())
 
@@ -176,14 +155,13 @@ def check_libs():
 
 
 def check_flash_attn():
-    head("FlashAttention (harus TIDAK dipakai)")
+    head("Attention configuration")
     try:
-        import flash_attn  # noqa: F401
+        __import__("flash_attn")
         warn("flash-attn terinstall tapi TIDAK akan dipakai:")
-        print("         umt5 & t5gemma2 gak support FA2 di transformers (verified).")
-        print("         SDPA dipakai otomatis. FA2 cuma buang ruang, gak masalah.")
+        print("         UMT5 pada pin 4.55.4 memakai eager; T5Gemma 2 dikonfigurasi SDPA.")
     except ImportError:
-        ok("flash-attn gak terinstall — benar, gak dibutuhkan (SDPA default)")
+        ok("flash-attn gak terinstall; tidak dibutuhkan konfigurasi ini")
 
 
 def check_lora_grad_checkpointing():
@@ -233,11 +211,17 @@ def check_lora_grad_checkpointing():
             pass
 
 
-def check_models():
-    """Cek bisa resolve config repo target. Deteksi gated-repo tanpa token."""
+def check_models(model_family="umt5-base"):
     head("Model HF (config arsitektur)")
     from huggingface_hub import hf_hub_download
+    import transformers
     for key, c in CONFIGS.items():
+        if key != model_family:
+            continue
+        if c.model_cls != "auto" and not hasattr(transformers, c.model_cls):
+            bad(f"{key}: transformers {transformers.__version__} belum memiliki {c.model_cls}")
+            problems.append(f"{key}: arsitektur tidak tersedia pada dependency terinstall")
+            continue
         try:
             hf_hub_download(c.repo, "config.json")
             ok(f"{key}: {c.repo} bisa diakses")
@@ -269,8 +253,8 @@ def check_dataset(data_dir=None, deep=False):
 def _check_one_dir(d, deep):
     import pyarrow.parquet as pq
 
-    files = sorted(glob.glob(os.path.join(d, "train-*.parquet")))
-    tmps = glob.glob(os.path.join(d, "tmp-*.parquet"))
+    files = sorted(glob.glob(os.path.join(d, "**", "train-*.parquet"), recursive=True))
+    tmps = glob.glob(os.path.join(d, "**", "tmp-*.parquet"), recursive=True)
     if tmps:
         bad(f"{d}: ada {len(tmps)} tmp-*.parquet — pretokenize ke-interupted")
         problems.append("pretokenize ke-interupted")
@@ -290,6 +274,10 @@ def _check_one_dir(d, deep):
     idxs, of_vals = [], set()
     for f in files:
         m = SHARD_RE.match(os.path.basename(f))
+        if m is None:
+            bad("nama shard tidak valid")
+            problems.append("nama shard tidak valid")
+            return
         idxs.append(int(m.group(1)))
         of_vals.add(int(m.group(2)))
     n = len(files)
@@ -341,6 +329,19 @@ def _check_one_dir(d, deep):
         return
 
     import pyarrow.compute as pc
+    if kind == "raw":
+        for filename in files:
+            parquet = pq.ParquetFile(filename)
+            for batch in parquet.iter_batches(batch_size=DEEP_BATCH_SIZE, columns=["lang", "raw", "clean"]):
+                columns = batch.to_pydict()
+                for lang, raw, clean in zip(columns["lang"], columns["raw"], columns["clean"]):
+                    if (not isinstance(lang, str) or lang not in SUPPORTED_LANGUAGES or
+                            not isinstance(raw, str) or not isinstance(clean, str)):
+                        bad("lang/raw/clean mengandung nilai yang tidak valid")
+                        problems.append("nilai dataset mentah tidak valid")
+                        return
+        ok("decode dataset mentah dan validasi lang/raw/clean lulus")
+        return
     stat = {"in_min": 10**9, "in_max": 0, "lab_min": 10**9, "lab_max": 0,
             "in_empty": 0, "lab_empty": 0}
     for f in files:
@@ -386,6 +387,7 @@ def main():
     ap.add_argument("--data-dir", default=None)
     ap.add_argument("--deep", action="store_true")
     ap.add_argument("--no-model", action="store_true", help="skip cek akses HF")
+    ap.add_argument("--model-family", choices=sorted(CONFIGS), default="umt5-base")
     args = ap.parse_args()
 
     print("corpus-cleaner — environment doctor")
@@ -396,7 +398,7 @@ def main():
     check_flash_attn()
     check_lora_grad_checkpointing()
     if not args.no_model:
-        check_models()
+        check_models(args.model_family)
     check_disk()
     check_dataset(args.data_dir, args.deep)
 

@@ -1,142 +1,75 @@
 # corpus-cleaner
 
-**v0.1** — LoRA fine-tune toolkit untuk **text cleaning / denoising**: teks
-kotor masuk, teks bersih keluar. Dua arsitektur subword encoder-decoder
-(ByT5 byte-level di-drop — 1 byte = 1 token selalu OOM di RTX 3070 Ti 8 GB
-utk korpus ini).
+LoRA fine-tune untuk pasangan raw → clean. Model utama yang aktif adalah `google/umt5-base`; pilot lama memakai `mt5-small`. Hasil pilot mT5 tidak membuktikan kualitas, kebutuhan VRAM, atau throughput UMT5.
 
-**Status v0.1: pipeline teruji end-to-end** (pilot T4 Colab: 178K rows,
-val loss 2.25; validasi ulang 100K rows di WSL2/Kaggle oleh owner: loss 2.9 /
-val 2.8). Full training 1.43M rows belum dijalankan — jadwal & hasil menyusul.
+## Precision dan attention
 
-- **Dataset:** [DranxX/corpus-cleaning-v1](https://huggingface.co/datasets/DranxX/corpus-cleaning-v1) — 1,431,369 pair raw→clean (id 73.6% / en 20.5% / zh 5.8%)
-- **Config arsitektur (lihat `src/config.py`):**
-  1. `umt5-base` → `google/umt5-base` — **580M, pipeline utama**. Pretraining lebih baik dari mT5 (EMA/scalable attention), vocab 256K, tokenizer paling padat utk id
-  2. `t5gemma-270m` → `google/t5gemma-2-270m-270m` — ~370M aktif, sliding window 4096, **gated repo** (dipakai lain waktu)
-  (arsitektur byte-level ByT5 dihapus total — selalu OOM di 8 GB utk korpus ini)
-
-## ATURAN #1: checkup dulu, no exceptions
-
-```bash
-python src/check_env.py
-```
-
-**Script apapun (finetune/inference) TIDAK BOLEH dijalankan sebelum
-`check_env.py` exit 0.** Ini berlaku juga untuk agent AI. Script ini mengecek:
-
-| # | Cek | Kenapa |
+| Model/GPU | Pilihan yang tersedia | Catatan |
 |---|---|---|
-| 1 | Python + OS | versi minimal |
-| 2 | torch build CPU vs CUDA | Windows PyPI torch = CPU-only; biang kerok "training nyasar CPU" & OOM palsu |
-| 3 | GPU + VRAM + bf16 | 3070 Ti 8 GB target; bf16 wajib di Ampere |
-| 4 | Library vs pin | versi lain sering rusak (PEFT/transformers mismatch) |
-| 5 | flash-attn | harus **tidak** dipakai — kedua arch gak support FA2 (verified) |
-| 6 | LoRA + grad checkpointing smoke test | forward+backward beneran di GPU; deteksi bug `use_reentrant` |
-| 7 | Akses repo HF model | deteksi gated repo tanpa token (t5gemma) |
-| 8 | Dataset shards | lengkap/berurutan/schema/total rows (+`--deep` decode) |
+| UMT5 pada T4 | FP32 | T4 tidak memiliki BF16 native; FP16 tidak dipaksakan karena risiko overflow forward |
+| UMT5 pada RTX 30xx | BF16 | `--precision auto` memilih BF16 native dan memuat base weights BF16 |
+| T5Gemma 2 pada T4 | FP32 sebagai baseline numerik | Pin dependency saat ini belum mendukung arsitektur T5Gemma 2 |
+| T5Gemma 2 pada RTX 30xx | BF16 setelah environment kompatibel disetujui | Bukan model T5Gemma generasi pertama yang tersedia pada 4.55.4 |
 
-Tambahan: `--deep` buat decode semua shard, `--no-model` kalau offline, `--data-dir` folder parquet kustom.
+UMT5 pada Transformers 4.55.4 memakai attention eager. Meminta SDPA pada versi tersebut tidak menghasilkan kernel fused yang lebih hemat: model tidak mendukungnya. Gradient checkpointing non-reentrant tetap aktif.
 
-## Install (urutan WAJIB, terutama Windows)
+T5Gemma 2 tersedia pada Transformers 5.0.0, sedangkan project ini masih mematok 4.55.4. `config.py` sekarang menyebut class yang benar dan script menolak model yang tidak tersedia sebelum tokenisasi. Dependency tidak dinaikkan otomatis; migrasi Trainer/PEFT/Accelerate perlu disetujui dan diverifikasi sebagai satu environment.
 
-```bash
-# 1. torch dulu — jangan dari PyPI kalau Windows (CPU-only!)
-python -m pip install torch --index-url https://download.pytorch.org/whl/cu124
+Referensi: [source UMT5 4.55.4](https://github.com/huggingface/transformers/blob/v4.55.4/src/transformers/models/umt5/modeling_umt5.py), [T5Gemma 2 pada Transformers 5.0.0](https://huggingface.co/docs/transformers/v5.0.0/en/model_doc/t5gemma2), [NVIDIA Ampere](https://docs.nvidia.com/cuda/ampere-tuning-guide/index.html).
 
-# 2. requirements (torch di-skip otomatis di Windows via marker)
-python -m pip install -r requirements.txt
+## Environment gate
 
-# 3. t5gemma gated: login akun HF yang udah granted + accept Gemma terms
-huggingface-cli login
-# akun: DranxX (sudah granted)
-
-# 4. WAJIB: cek environment
-python src/check_env.py
-```
-
-Kalau `bitsandbytes` gagal di Windows: training masih bisa jalan pakai
-`--optim adamw_torch` (sedikit lebih boros VRAM, lihat tabel VRAM).
-
-## Dataset
+Gunakan environment Python yang sama untuk instalasi, check, dan training. Di Windows, simpan venv, model, dataset, dan cache pada drive D sesuai panduan pemilik. Jangan menimpa torch runtime yang sudah bekerja.
 
 ```bash
-# download dataset utuh (1.43M rows) — ambil folder parquet ke dataset/
-python - <<'PY'
-from huggingface_hub import snapshot_download
-snapshot_download("DranxX/corpus-cleaning-v1", repo_type="dataset",
-                  local_dir="dataset", allow_patterns=["*.parquet"])
-PY
-
-# cek shards (jumlah/urutan/schema/rows)
-python src/check_env.py
+python src/check_env.py --model-family umt5-base --data-dir dataset
 ```
 
-## Fine-tune
+Training/inference hanya dijalankan setelah check exit 0. Check memeriksa build CUDA, versi pin, gradient checkpointing, akses model yang dipilih, shard rekursif, schema, dan disk. `--deep` memvalidasi dataset mentah maupun dataset tokenized; training script menerima schema mentah `lang/raw/clean`.
+
+`--no-model` melewati pemeriksaan akses Hub untuk environment offline. Ini tidak melewati gate CUDA atau versi library.
+
+## Training UMT5
+
+Setelah environment gate lulus, gunakan precision sesuai GPU:
 
 ```bash
-# CONFIG utama — umt5-base (580M)
-python src/finetune.py --data-dir dataset \
-  --out models/umt5-full --bf16
-
-# opsional — t5gemma-270m (butuh login HF, lain waktu)
-python src/finetune.py --model-family t5gemma-270m --data-dir dataset \
-  --out models/t5g-full --bf16
-
-# dataset dari HF langsung (on-the-fly tokenize)
-python src/finetune.py \
-  --hf-dataset DranxX/corpus-cleaning-v1 --out models/umt5-full --bf16
+python src/finetune.py --data-dir dataset --out models/umt5-full --precision auto
 ```
+
+Pada T4, mulai pengukuran dengan batch kecil:
+
+```bash
+python src/finetune.py --data-dir dataset --out models/umt5-t4 --precision fp32 --batch 1 --accum 16
+```
+
+Default script: input 4.096, target 512, LoRA r32/alpha64, learning rate 3e-5, batch 2, accumulation 8, dua epoch. `--bf16` tetap tersedia; jangan gabungkan dengan `--precision fp32`.
+
+- Tokenisasi dilakukan batched dan disimpan pada Arrow cache. Identitas cache mencakup dataset, vocabulary/tokenizer, special tokens, budget, dan versi preprocessing.
+- Trainer menerima dataset Arrow asli beserta kolom panjang, sehingga grouping tidak memindai ulang wrapper per row.
+- Padding disejajarkan ke kelipatan delapan; padding labels memakai -100 dan tidak masuk loss.
+- Satu GPU menjadi default untuk proses biasa. Checkpoint terakhir dipilih secara numerik melalui utilitas Trainer.
+- Base weights dimuat dengan dtype yang dipilih. LoRA adapters dapat tetap FP32; itu tidak berarti compute diam-diam memakai FP32.
+- `cleaning_config.json` pada adapter final menyimpan model-family dan budget encoder untuk inference.
+
+Sequence budget adalah batas resource, bukan jaminan seluruh row muat. Target yang dipotong dapat mengajari cleaner membuang akhir dokumen; input yang dipotong dapat kehilangan bukti yang dibutuhkan target. Kebijakan skip versus truncation perlu dipilih sebelum menafsirkan fidelity hasil training. Jangan membuat chunk raw/clean dengan offset token yang sama tanpa memastikan alignment.
+
+Gunakan folder run baru jika model, dataset, budget, rank, atau konfigurasi optimizer berubah. Resume checkpoint lama tidak otomatis memvalidasi semua perubahan tersebut.
 
 ## Inference
 
+Setelah environment gate lulus dan adapter tersedia:
+
 ```bash
-python src/inference.py --adapter models/umt5-full/final \
-  --lang id --text "No. 24; Diperbarui Maret 2011  \nKlik di sini..."
+python src/inference.py --adapter models/umt5-full/final --lang id --text "teks sumber"
 ```
 
-Format input training: `<{lang}> {raw}` — prefix bahasa wajib ada di inference juga.
+Default generation menggunakan min-new 0, satu beam, repetition penalty 1, dan no-repeat-ngram 0. Ini membolehkan output pendek serta repetisi sumber yang bermakna. Input di luar budget encoder ditolak; script tidak memotong dokumen diam-diam. Bahasa yang didukung tetap id/en/zh dan prefix bahasa mengikuti training.
 
-## Directory layout
+Jika kualitas cleaner masih buruk, evaluasi kehilangan angka, hedge, negasi, struktur list/tabel, dan bagian akhir dokumen. Jangan menutupinya dengan minimum output panjang atau larangan repetisi global.
 
-```
-corpus-cleaner/
-├── AGENTS.md             ← PANDUAN AGENT (baca dulu sebelum ngapa-ngapain)
-├── Readme.md             ← file ini
-├── requirements.txt      ← pin yang diuji; urutan install di atas
-├── src/
-│   ├── config.py         ← 2 config arsitektur resmi (mt5-small, t5gemma-270m) + legacy
-│   ├── check_env.py      ← WAJIB JALAN DULU (gate exit 0)
-│   ├── finetune.py       ← LoRA training
-│   └── inference.py      ← load base+adapter, generate
-├── dataset/              ← parquet dari HF (di-gitignore)
-├── models/               ← checkpoint + adapter (di-gitignore)
-└── temp/runtime/         ← snapshot lokal model gated t5gemma (di-gitignore)
-```
+## Pengukuran resource
 
-## VRAM (RTX 3070 Ti 8 GB, budget seq 4096/4096)
+Jangan menganggap LoRA membuat attention atau vocabulary logits murah. UMT5 eager tetap memiliki biaya attention kuadratik; decoder logits tumbuh dengan batch × target length × vocabulary. Naikkan batch hanya setelah mengukur peak VRAM pada batch panjang yang benar-benar muncul dalam dataset.
 
-| model | weights bf16 | LoRA+grads | aktivasi (ckpt, batch 8, seq 4096 long-tail) | total |
-|---|---|---|---|---|
-| mt5-small | 0.6 GB | ~0.1 GB | ~4.5 GB worst-case batch | **~5.2 GB** ✅ |
-| t5gemma-270m | 0.75 GB | ~0.25 GB | ~4.8 GB worst-case batch | **~5.8 GB** ✅ |
-| byt5-medium (legacy) | 1.2 GB | ~0.3 GB | byte-level 4× panjang → OOM | ⚠️ |
-
-group_by_length bikin mayoritas batch jalan di seq pendek (median target id
-~50-90 token) → throughput harian jauh di atas worst-case. Batch 16 HANYA
-kalau budget diturunin (mis. `--max-input 1024`).
-
-## Notes penting
-
-- **FA2 gak berlaku** untuk kedua arch (`_supports_flash_attn=False` verified).
-  SDPA = default & tercepat yang tersedia. `check_env.py` yang menegaskan ini.
-- **`gradient_checkpointing_kwargs={"use_reentrant": False}`** WAJIB di
-  transformers < 4.49 — default di sana `use_reentrant=True` yang crash
-  `element 0 of tensors does not require grad` saat LoRA. Sudah dipasang di
-  `finetune.py`.
-- **Gated t5gemma**: snapshot lokal tersimpan di `temp/runtime/` — bisa pakai
-  `--base temp/runtime` buat offline.
-- Korpus panjang-skew: budget 4096/4096 menangkap ~99% rows utuh (input:
-  id p99 185 tok, en median 1056 tok; target: id p99.9 174 tok, en p95 3.4K
-  tok). Sisanya (en ekstrem >4K tok) ke-truncate — chunking per-paragraf
-  jadi pengembangan lanjutan kalau dibutuhin.
-- Statistik lengkap dataset: lihat `experiments/merged/data.md`.
+Catat precision, jumlah row, truncation, it/s, peak VRAM, eval loss, dan pemeriksaan preservasi konten. Notebook dua shard adalah pilot Indonesian; hasilnya tidak mewakili seluruh distribusi en/zh.
